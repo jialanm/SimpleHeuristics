@@ -92,8 +92,9 @@ def filter_to_disease_genes(dat, genes_dict):
             (dat["start"] >= int(
                 genes_dict[cur_disease_gene].split(":")[1].split("-")[0])) &
             (dat["end"] <= int(
-                genes_dict[cur_disease_gene].split(":")[1].split("-")[1]))]
-        # (dat["strand"] == genes_dict[cur_disease_gene].split(":")[2])]
+                genes_dict[cur_disease_gene].split(":")[1].split("-")[1]))].copy()
+        cur_dat["gene"] = cur_disease_gene
+        # (dat["strand"] == genes_dict[cur_disease_gene].split(":")[2])
 
         if cur_dat.shape[0] == 0:
             print(f"No junctions found for {cur_disease_gene}.")
@@ -102,6 +103,9 @@ def filter_to_disease_genes(dat, genes_dict):
     return filtered_bed_dat
 
 
+# TODO: Change the & between start and end to |.
+# How to define if a splice junction is present in the filtered data based on the
+# 1kb-10kb window?
 def is_present_causal_sj(filtered_bed_dat, causal_sj):
     causal_sj_row = filtered_bed_dat[
         (filtered_bed_dat["chr"] == causal_sj.split(":")[0]) &
@@ -160,6 +164,15 @@ def read_junctions_bed(junctions_bed_path, use_cols=None):
 
     return bed_dat
 
+
+def normalize_reads_by_gene(dat):
+    """
+    Normalize the number of reads by dividing the reads of a splice junction by the
+    total number of reads of all splice junctions within the same gene.
+    :param dat:
+    :return:
+    """
+    pass
 
 def apply_filters(bed_dat, sample_id, gtex_normalized_dat):
     print("-----------------------------------")
