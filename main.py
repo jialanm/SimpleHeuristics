@@ -124,21 +124,48 @@ def filter_by_uniquely_mapped_reads(dat, threshold):
 
 
 def get_sj_only_in_first_dat(dat1, dat2):
-    merged_dat = pd.merge(dat1, dat2, how="left", on=["chr", "start", "end"], suffixes=('','_y'),
-                          indicator=True).query('_merge == "left_only"').drop(columns=['_merge'])
-    merged_dat = merged_dat.drop(columns=[col for col in merged_dat.columns if col.endswith("_y")])
+    merged_dat = pd.merge(dat1, dat2, how="left", on=["chr", "start", "end"],
+                          suffixes=('', '_y'),
+                          indicator=True).query('_merge == "left_only"').drop(
+        columns=['_merge'])
+    merged_dat = merged_dat.drop(
+        columns=[col for col in merged_dat.columns if col.endswith("_y")])
     return merged_dat
 
 
-def compare_with_gtex(gtex_normalized_dat, dat):
+def get_sj_different_between_dats(dat1, dat2, lr_threshold):
+    merged_dat = pd.merge(dat1, dat2, how='inner', on=["chr", "start", "end"],
+                          suffixes=('', '_y'))
+    merged_dat["lr"] = abs(np.log(merged_dat["normalized"] / merged_dat["normalized_y"]))
+    # # Test
+    # pd.set_option('display.max_columns', None)
+    # cur_sample = "UC84-1RNA"
+    # causal_sj = TRUTH_SET[cur_sample]
+    # is_present_causal_sj(merged_dat, causal_sj)
+    # #
+
+    merged_dat = merged_dat[merged_dat["lr"] > lr_threshold]
+    merged_dat = merged_dat.drop(
+        columns=[col for col in merged_dat.columns if col.endswith("_y")])
+    merged_dat = merged_dat.drop(columns=["lr"])
+
+    return merged_dat
+
+
+def compare_with_gtex(gtex_normalized_dat, dat, lr_threshold):
     # in_rd_not_in_gtex_dat = get_sj_only_in_first_dat(dat, gtex_dat)
     in_rd_not_in_gtex_normalized_dat = get_sj_only_in_first_dat(dat,
                                                                 gtex_normalized_dat)
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
-    in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(
-        gtex_normalized_dat, dat)
+    # in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(
+    #     gtex_normalized_dat, dat)
+    different_between_rd_and_gtex = get_sj_different_between_dats(dat,
+                                                                  gtex_normalized_dat,
+                                                                  lr_threshold)
 
-    return in_rd_not_in_gtex_normalized_dat
+    res = pd.concat([in_rd_not_in_gtex_normalized_dat, different_between_rd_and_gtex])
+    return res
+    # pass
     # diff_dat = pd.concat([in_rd_not_in_gtex_normalized_dat,
     #                       in_gtex_normalized_not_in_rd_dat],
     #                      axis=0, ignore_index=True)
@@ -172,7 +199,18 @@ def normalize_reads_by_gene(dat):
     :param dat:
     :return:
     """
-    pass
+    # Get the total number of reads for each gene.
+    gene_total_sj_reads = dat.groupby("gene")["uniquely_mapped"].sum().reset_index()
+    gene_total_sj_reads.columns = ["gene", "total_reads"]
+    gene_total_sj_reads_dict = {}
+    for i in range(gene_total_sj_reads.shape[0]):
+        gene_total_sj_reads_dict[gene_total_sj_reads.iloc[i, 0]] = gene_total_sj_reads.iloc[i, 1]
+
+    print(gene_total_sj_reads_dict)
+    dat["normalized"] = dat["uniquely_mapped"] / dat["gene"].map(
+        gene_total_sj_reads_dict)
+    return dat
+
 
 def apply_filters(bed_dat, sample_id, gtex_normalized_dat):
     print("-----------------------------------")
@@ -184,13 +222,18 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat):
 
     # 2. Filter to known disease genes.
     filtered_bed_dat = filter_to_disease_genes(bed_dat, DISEASE_GENES)
+    filtered_gtex_normalized_dat = filter_to_disease_genes(gtex_normalized_dat,
+                                                           DISEASE_GENES)
     print(filtered_bed_dat.shape)
     # casual_sj = TRUTH_SET[sample_id]
     # is_present = is_present_causal_sj(filtered_bed_dat, casual_sj)
 
     # 3. Compare with GTEx data.
-    filtered_bed_dat = compare_with_gtex(gtex_normalized_dat,
-                                         filtered_bed_dat)
+    normalized_filtered_bed_dat = normalize_reads_by_gene(filtered_bed_dat)
+    normalized_gtex_normalized_dat = normalize_reads_by_gene(filtered_gtex_normalized_dat)
+    filtered_bed_dat = compare_with_gtex(normalized_gtex_normalized_dat,
+                                         normalized_filtered_bed_dat,
+                                         lr_threshold=2)
     print(filtered_bed_dat.shape)
 
     # 4. Filter by maximum spliced alignment overhang.
@@ -218,6 +261,8 @@ def main():
     gtex_normalized_dat = filter_by_uniquely_mapped_reads(gtex_normalized_dat, 1)
 
     for cur_sample in TRUTH_SET:
+        # if cur_sample != "UC84-1RNA":
+        #     continue
         if cur_sample in BATCH_2023:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2023_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
         elif cur_sample in BATCH_2022:
@@ -251,8 +296,20 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # dat1 = pd.DataFrame([["chr1", 1, 2, 5], ["chr1", 3, 4, 5], ["chr1", 3, 10, 5]])
-    # dat1.columns = ["chr", "start", "end", "count"]
+#     dat1 = pd.DataFrame([["chr1", 1, 2, 5, "A"], ["chr1", 3, 4, 5, "A"], ["chr1",
+# 3, 10, 5, "B"]])
+#     dat1.columns = ["chr", "start", "end", "uniquely_mapped", "gene"]
+#     dat1_normalized = normalize_reads_by_gene(dat1)
+#     print(dat1_normalized)
+#
+#     dat2 = pd.DataFrame([["chr1", 1, 2, 2, "A"], ["chr1", 3, 4, 10, "A"], ["chr1",
+#                                                                           3, 10, 5,
+#                                                                           "B"]])
+#     dat2.columns = ["chr", "start", "end", "uniquely_mapped", "gene"]
+#     dat2_normalized = normalize_reads_by_gene(dat2)
+#     print(dat2_normalized)
+#     get_sj_different_between_dats(dat1_normalized, dat2_normalized, 0.1)
+
     # dat2 = pd.DataFrame([["chr1", 1, 2, 3], ["chr1", 3, 5, 3], ["chr2", 5, 7, 3]])
     # dat2.columns = ["chr", "start", "end", "count"]
     # print(get_sj_only_in_first_dat(dat1, dat2))
