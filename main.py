@@ -8,6 +8,7 @@ import pandas as pd
 import hail as hl
 import gzip
 import pyBigWig
+from scipy import stats
 
 CHROM_SET = set([f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"])
 DESCRIPTION_COLS = ["motif", "uniquely_mapped", "multi_mapped",
@@ -165,8 +166,8 @@ def get_sj_different_between_dats(dat1, dat2, lr_sj_threshold, lr_coverage_thres
     # print("-----------------------------------")
     # is_present_causal_sj(dat2, TRUTH_SET["B14-78-1-U"])
     # print("-----------------------------------")
-    # is_present_causal_sj(merged_dat, TRUTH_SET["CLA_180CJ_DP_2"])
-    # print("-----------------------------------")
+    is_present_causal_sj(merged_dat, TRUTH_SET["CLA_180CJ_DP_2"])
+    print("-----------------------------------")
 
     # merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold)]
     merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold) | (
@@ -277,37 +278,68 @@ def normalize_reads_by_gene(dat, coverage_bw):
         gene_total_sj_reads_dict)
 
     # Normalize by the coverage of the gene.
-    sum_gene_coverage_dict = {}
+    iqs_intron_coverage_dict = {}
     mean_gene_coverage_dict = {}
     for gene in DISEASE_GENES:
-        cur_dat = dat[dat["gene"] == gene]
-        gene_coverage = 0
-        sj_segments = merge_overlapping_segments(cur_dat)
-        for segment in sj_segments:
-            gene_coverage += np.nansum(coverage_bw.values(segment[0], segment[1],
-                                                          segment[2]))
-        # Remove 0 values because they are not informative and will skew the mean.
-        # gene_coverage = [i for i in gene_coverage if i != 0]
-        sum_gene_coverage_dict[gene] = gene_coverage
-        num_of_bases = 0
-        for segment in sj_segments:
-            num_of_bases += segment[2] - segment[1]
+        gene_chr = DISEASE_GENES[gene].split(":")[0]
+        gene_start = int(DISEASE_GENES[gene].split(":")[1].split("-")[0])
+        gene_end = int(DISEASE_GENES[gene].split(":")[1].split("-")[1])
 
-        mean_gene_coverage_dict[gene] = gene_coverage / num_of_bases
+        # total_exon_coverage, num_of_bases, all_bases = get_exon_coverage(coverage_bw,
+        #                                                                  gene_chr,
+        #                                                                  gene_start,
+        #                                                                  gene_end,
+        #                                                                  gene)
+        # mean_gene_coverage_dict[gene] = total_exon_coverage / num_of_bases
+
 
     # print(mean_gene_coverage_dict)
-    dat["sj_coverage"] = dat.apply(lambda row: np.sum(coverage_bw.values(row["chr"],
-                                                                         row["start"],
-                                                                         row["end"])),
+    dat["sj_coverage"] = dat.apply(lambda row: get_intron_coverage(coverage_bw,
+                                                                   row["chr"],
+                                                                   row["start"],
+                                                                   row["end"]),
                                    axis=1)
 
     # pd.set_option('display.max_columns', None)
     # is_present_causal_sj(dat, TRUTH_SET["CLA_180CJ_DP_2"])
     # print("-----------------------------------")
-    dat["normalized_by_coverage"] = dat["sj_coverage"] / dat["gene"].map(
-        sum_gene_coverage_dict)
+    dat["normalized_by_coverage"] = dat["sj_coverage"] - dat["gene"].map(
+        mean_gene_coverage_dict)
+    print(mean_gene_coverage_dict["RYR1"])
 
     return dat
+
+
+def get_exon_coverage(bw, chr, start, end, gene_name=None):
+    if gene_name is None:
+        cur_mane_exons = mane_exons_in_disease_genes[
+            (mane_exons_in_disease_genes["chr"] == chr) &
+            (mane_exons_in_disease_genes["start"] >= start) &
+            (mane_exons_in_disease_genes["end"] <= end)]
+    else:
+        cur_mane_exons = mane_exons_in_disease_genes[
+            mane_exons_in_disease_genes["gene"] == gene_name]
+
+    total_exon_coverage = 0
+    num_of_bases = 0
+    all_bases = []
+    for i in range(cur_mane_exons.shape[0]):
+        chr = cur_mane_exons.iloc[i, 0]
+        start = cur_mane_exons.iloc[i, 1]
+        end = cur_mane_exons.iloc[i, 2]
+        num_of_bases += end - start
+
+        coverage = list(bw.values(chr, start, end))
+        total_exon_coverage += np.nansum(coverage)
+        all_bases += coverage
+
+    return total_exon_coverage, num_of_bases, all_bases
+
+
+def get_intron_coverage(bw, chr, start, end, gene_name=None):
+    exon_coverage = get_exon_coverage(bw, chr, start, end, gene_name)[0]
+    total_coverage = np.nansum(bw.values(chr, start, end))
+    return total_coverage - exon_coverage
 
 
 def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
@@ -373,8 +405,8 @@ def main():
     gtex_normalized_dat = filter_by_uniquely_mapped_reads(gtex_normalized_dat, 1)
 
     for cur_sample in TRUTH_SET:
-        # if cur_sample != "CLA_180CJ_DP_2":
-        #     continue
+        if cur_sample != "CLA_180CJ_DP_2":
+            continue
         if cur_sample in BATCH_2023:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2023_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
         elif cur_sample in BATCH_2022:
@@ -411,7 +443,12 @@ def main():
 
 if __name__ == "__main__":
     # bigwig_path = "gs://tgg-rnaseq/batch_0/bigWig/210DB_BW_M1.bigWig"
-    # read_coverage_bigwig(bigwig_path, "chr19", 38433691, 38595273)
+    # bw = read_coverage_bigwig(bigwig_path)
+    # values = bw.values("chr19", 1, 3)
+    # print(values)
+    mane_exons = pd.read_csv("MANE_exon_1based_start.tsv", sep="\t")
+    mane_exons_in_disease_genes = filter_to_disease_genes(mane_exons, DISEASE_GENES)
+    print(mane_exons_in_disease_genes)
     main()
 #     dat1 = pd.DataFrame([["chr1", 1, 2, 5, "A"], ["chr1", 3, 4, 5, "A"], ["chr1",
 # 3, 10, 5, "B"]])
