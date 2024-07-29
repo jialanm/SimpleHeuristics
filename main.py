@@ -5,10 +5,9 @@ import os
 
 import numpy as np
 import pandas as pd
-import hail as hl
-import gzip
 import pyBigWig
-from scipy import stats
+import matplotlib.pyplot as plt
+import pickle
 
 CHROM_SET = set([f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"])
 DESCRIPTION_COLS = ["motif", "uniquely_mapped", "multi_mapped",
@@ -79,6 +78,10 @@ BATCH_2022 = {"BON_B16-59_1"}
 "BON_B16-59_1": "chr21:45989778-45990257", # does not have num_samples_with_this_junction
 """
 
+validating_metrics = {}
+samples = list(TRUTH_SET.keys())
+causal_sj = list(TRUTH_SET.values())
+
 
 def convert_to_int(x):
     try:
@@ -134,64 +137,148 @@ def get_sj_only_in_first_dat(dat1, dat2):
         columns=['_merge'])
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
+    merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
+    merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
     return merged_dat
 
 
-def get_sj_different_between_dats(dat1, dat2, lr_sj_threshold, lr_coverage_threshold):
+def get_sj_metric(dat, chr, start, end, metric_col):
+    return dat[(dat["chr"] == chr) &
+               (dat["start"] == start) &
+               (dat["end"] == end)][metric_col].iloc[0]
+
+
+def get_sj_different_between_dats(sample_dat, gtex_dat,
+                                  lr_sj_threshold,
+                                  lr_coverage_threshold,
+                                  cur_sample):
     pd.set_option('display.max_columns', None)
-    merged_dat = pd.merge(dat1, dat2, how='inner', on=["chr", "start", "end"],
+    merged_dat = pd.merge(sample_dat, gtex_dat, how='inner', on=["chr", "start", "end"],
                           suffixes=('', '_y'))
     pseudocount = 1e-12
-    sj_ratio = (merged_dat["normalized_by_sj"] + pseudocount) / (merged_dat[
-                                                                     "normalized_by_sj_y"] + pseudocount)
+    sj_ratio = (merged_dat["normalized_by_sj"] + pseudocount) / \
+               (merged_dat["normalized_by_sj_y"] + pseudocount)
 
-    coverage_ratio = (merged_dat["normalized_by_coverage"] + pseudocount) / (merged_dat[
-                                                                                 "normalized_by_coverage_y"] + pseudocount)
-    # for i in range(coverage_ratio.shape[0]):
-    #     if coverage_ratio[i] < 0:
-    #         print(merged_dat.iloc[i, :])
+    coverage_ratio = (merged_dat["normalized_by_coverage"] + pseudocount) / \
+                     (merged_dat["normalized_by_coverage_y"] + pseudocount)
 
     merged_dat["lr_sj"] = abs(np.log2(sj_ratio))
     merged_dat["lr_coverage"] = abs(np.log2(coverage_ratio))
+
     # # Test
     # pd.set_option('display.max_columns', None)
     # cur_sample = "UC84-1RNA"
     # causal_sj = TRUTH_SET[cur_sample]
     # is_present_causal_sj(merged_dat, causal_sj)
     # #
+    # is_present_causal_sj(merged_dat, TRUTH_SET[cur_sample])
+    # print(f"{TRUTH_SET[cur_sample]} is not present in {cur_sample}")
+    # get the values of dict TRUTH_SET
+    for cur_causal_sj in causal_sj:
+        if not is_present_causal_sj(merged_dat, cur_causal_sj):
+            # print(f"{cur_causal_sj} is not present in {cur_sample}")
+            continue
+
+        cur_chr = cur_causal_sj.split(":")[0]
+        cur_start = int(cur_causal_sj.split(":")[1].split("-")[0])
+        cur_end = int(cur_causal_sj.split(":")[1].split("-")[1])
+
+        cur_splicing_percentage = get_sj_metric(merged_dat,
+                                                cur_chr,
+                                                cur_start,
+                                                cur_end,
+                                                "normalized_by_sj")
+        cur_coverage = get_sj_metric(merged_dat,
+                                     cur_chr,
+                                     cur_start,
+                                     cur_end,
+                                     "normalized_by_coverage")
+
+        cur_lr_sj = get_sj_metric(merged_dat,
+                                  cur_chr,
+                                  cur_start,
+                                  cur_end,
+                                  "lr_sj")
+
+        cur_lr_coverage = get_sj_metric(merged_dat,
+                                        cur_chr,
+                                        cur_start,
+                                        cur_end,
+                                        "lr_coverage")
+
+        gtex_sj = get_sj_metric(merged_dat,
+                                cur_chr,
+                                cur_start,
+                                cur_end,
+                                "normalized_by_sj_y")
+
+        gtex_coverage = get_sj_metric(merged_dat,
+                                      cur_chr,
+                                      cur_start,
+                                      cur_end,
+                                      "normalized_by_coverage_y")
+
+        cur_df = pd.DataFrame([[cur_sample, cur_causal_sj, cur_splicing_percentage,
+                                cur_coverage, cur_lr_sj, cur_lr_coverage, gtex_sj,
+                                gtex_coverage]])
+        cur_df.columns = ["sample_id", "sj", "splicing_percentage", "coverage", "lr_sj",
+                          "lr_coverage", "gtex_sj", "gtex_coverage"]
+        print(cur_sample)
+        print(cur_df)
+
+        global validating_metrics
+        if cur_causal_sj not in validating_metrics:
+            validating_metrics[cur_causal_sj] = cur_df
+        else:
+            new_df = pd.concat([validating_metrics[cur_causal_sj], cur_df], axis=0)
+            validating_metrics[cur_causal_sj] = new_df
 
     pd.set_option('display.max_columns', None)
-    # print(merged_dat)
-    # is_present_causal_sj(dat1, TRUTH_SET["B14-78-1-U"])
-    # print("-----------------------------------")
-    # is_present_causal_sj(dat2, TRUTH_SET["B14-78-1-U"])
-    # print("-----------------------------------")
-    is_present_causal_sj(merged_dat, TRUTH_SET["CLA_180CJ_DP_2"])
+    # is_present_causal_sj(merged_dat, TRUTH_SET[cur_sample])
     print("-----------------------------------")
+    # merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold) | (
+    #         merged_dat["lr_coverage"] > lr_coverage_threshold)]
+    merged_dat = merged_dat[(merged_dat["lr_coverage"] > lr_coverage_threshold)]
 
-    # merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold)]
-    merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold) | (
-            merged_dat["lr_coverage"] > lr_coverage_threshold)]
-    # merged_dat = merged_dat[merged_dat["lr_coverage"] > lr_coverage_threshold]
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
-    # is_present_causal_sj(merged_dat, TRUTH_SET["CLA_180CJ_DP_2"])
     merged_dat = merged_dat.drop(columns=["lr_sj", "lr_coverage"])
 
     return merged_dat
 
 
-def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold, lr_coverage_threshold):
+def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
+                      lr_coverage_threshold, cur_sample):
     # in_rd_not_in_gtex_dat = get_sj_only_in_first_dat(dat, gtex_dat)
     in_rd_not_in_gtex_normalized_dat = get_sj_only_in_first_dat(dat,
                                                                 gtex_normalized_dat)
+    print("Number of splice junctions only in the sample data: ",
+          in_rd_not_in_gtex_normalized_dat.shape[0])
+    gtex_mean_normalized_coverage_by_gene = gtex_normalized_dat.groupby("gene")[
+        "normalized_by_coverage"].mean()
+    gtex_gene_mean_normalized_coverage_dict = gtex_mean_normalized_coverage_by_gene.to_dict()
+
+    in_rd_not_in_gtex_normalized_dat["lr_coverage"] = abs(np.log2(
+        in_rd_not_in_gtex_normalized_dat["normalized_by_coverage"] / \
+                                                              in_rd_not_in_gtex_normalized_dat["gene"].map(
+                                                              gtex_gene_mean_normalized_coverage_dict)))
+    print(sorted(in_rd_not_in_gtex_normalized_dat["lr_coverage"]))
+    pd.set_option('display.max_columns', None)
+    is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
+    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
+        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= 3]
+    print("Number of splice junctions only in the sample data after filtering: ",
+          in_rd_not_in_gtex_normalized_dat.shape[0])
+    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(columns=["lr_coverage"])
+
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
     in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
                                                                 dat)
     different_between_rd_and_gtex = get_sj_different_between_dats(dat,
                                                                   gtex_normalized_dat,
-                                                                  lr_sj_threshold=2,
-                                                                  lr_coverage_threshold=2)
+                                                                  lr_sj_threshold,
+                                                                  lr_coverage_threshold,
+                                                                  cur_sample)
 
     res = pd.concat([in_rd_not_in_gtex_normalized_dat,
                      # in_gtex_normalized_not_in_rd_dat,
@@ -200,7 +287,7 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold, lr_coverage_thr
     # pass
     # diff_dat = pd.concat([in_rd_not_in_gtex_normalized_dat,
     #                       in_gtex_normalized_not_in_rd_dat],
-    #                      axis=0, ignore_index=True)
+    #                       axis=0, ignore_index=True)
     # return diff_dat
 
 
@@ -234,28 +321,23 @@ def read_coverage_bigwig(bigwig_path):
     return bw
 
 
-def merge_overlapping_segments(dat):  # TODO: check the algorithm
-    dat = dat.sort_values(by=["start", "end"])
-    segments = []
-    last_start = None
-    last_end = None
-    chr = dat["chr"].iloc[0]
-    for index, row in dat.iterrows():
-        start = row["start"]
-        end = row["end"]
+def count_reads_with_same_donor_or_acceptor(reads_with_same_donor,
+                                            reads_with_same_acceptor,
+                                            chr, start, end, uniquely_mapped):
+    reads_with_same_donor = \
+        reads_with_same_donor[(reads_with_same_donor["chr"] == chr) &
+                              (reads_with_same_donor["start"] == start)][
+            "total_reads"].iloc[0]
+    reads_with_same_acceptor = \
+        reads_with_same_acceptor[(reads_with_same_acceptor["chr"] == chr)
+                                 & (reads_with_same_acceptor["end"] == end)][
+            "total_reads"].iloc[0]
 
-        if last_start is None:
-            last_start = start
-            last_end = end
-        else:
-            if start <= last_end:
-                last_end = max(last_end, end)
-            else:
-                segments.append((chr, last_start, last_end))
-                last_start = start
-                last_end = end
-    segments.append((chr, last_start, last_end))
-    return segments
+    # The number of uniquely_mapped reads are counted twice in both
+    # reads_with_same_donor and reads_with_same_acceptor. Therefore, subtract it once
+    # in the denominator.
+    return uniquely_mapped / (
+            reads_with_same_donor + reads_with_same_acceptor - uniquely_mapped)
 
 
 def normalize_reads_by_gene(dat, coverage_bw):
@@ -266,46 +348,75 @@ def normalize_reads_by_gene(dat, coverage_bw):
     """
 
     # Normalize by total reads of splice junctions within the gene.
-    gene_total_sj_reads = dat.groupby("gene")["uniquely_mapped"].sum().reset_index()
-    gene_total_sj_reads.columns = ["gene", "total_reads"]
-    gene_total_sj_reads_dict = {}
-    for i in range(gene_total_sj_reads.shape[0]):
-        gene_total_sj_reads_dict[gene_total_sj_reads.iloc[i, 0]] = \
-            gene_total_sj_reads.iloc[i, 1]
+    # gene_total_sj_reads = dat.groupby("gene")["uniquely_mapped"].sum().reset_index()
+    # gene_total_sj_reads.columns = ["gene", "total_reads"]
+    # gene_total_sj_reads_dict = {}
+    # for i in range(gene_total_sj_reads.shape[0]):
+    #     gene_total_sj_reads_dict[gene_total_sj_reads.iloc[i, 0]] = \
+    #         gene_total_sj_reads.iloc[i, 1]
+    reads_with_same_donor = dat.groupby(["chr", "start"])[
+        "uniquely_mapped"].sum().reset_index()
+    reads_with_same_donor.columns = ["chr", "start", "total_reads"]
+
+    reads_with_same_acceptor = dat.groupby(["chr", "end"])[
+        "uniquely_mapped"].sum().reset_index()
+    reads_with_same_acceptor.columns = ["chr", "end", "total_reads"]
+    dat["normalized_by_sj"] = dat.apply(lambda row:
+                                        count_reads_with_same_donor_or_acceptor(
+                                            reads_with_same_donor,
+                                            reads_with_same_acceptor,
+                                            row["chr"],
+                                            row["start"],
+                                            row["end"],
+                                            row["uniquely_mapped"]),
+                                        axis=1)
 
     # print(gene_total_sj_reads_dict)
-    dat["normalized_by_sj"] = dat["uniquely_mapped"] / dat["gene"].map(
-        gene_total_sj_reads_dict)
+    # dat["normalized_by_sj"] = dat["uniquely_mapped"] / dat["gene"].map(
+    #     gene_total_sj_reads_dict)
 
     # Normalize by the coverage of the gene.
-    iqs_intron_coverage_dict = {}
     mean_gene_coverage_dict = {}
     for gene in DISEASE_GENES:
         gene_chr = DISEASE_GENES[gene].split(":")[0]
         gene_start = int(DISEASE_GENES[gene].split(":")[1].split("-")[0])
         gene_end = int(DISEASE_GENES[gene].split(":")[1].split("-")[1])
 
-        # total_exon_coverage, num_of_bases, all_bases = get_exon_coverage(coverage_bw,
-        #                                                                  gene_chr,
-        #                                                                  gene_start,
-        #                                                                  gene_end,
-        #                                                                  gene)
-        # mean_gene_coverage_dict[gene] = total_exon_coverage / num_of_bases
-
-
+        total_exon_coverage, num_of_bases = get_exon_coverage(coverage_bw,
+                                                              gene_chr,
+                                                              gene_start,
+                                                              gene_end,
+                                                              gene)
+        mean_gene_coverage_dict[gene] = total_exon_coverage / num_of_bases
+    #     total_intron_coverage, num_of_bases = get_intron_coverage(coverage_bw,
+    #                                                               gene_chr,
+    #                                                               gene_start,
+    #                                                               gene_end)
+    #     mean_intron_coverage_dict[gene] = total_intron_coverage / num_of_bases
+    #
     # print(mean_gene_coverage_dict)
-    dat["sj_coverage"] = dat.apply(lambda row: get_intron_coverage(coverage_bw,
-                                                                   row["chr"],
-                                                                   row["start"],
-                                                                   row["end"]),
-                                   axis=1)
+    # dat["sj_coverage"] = dat.apply(lambda row: np.nanmean([i for i in list(
+    #     coverage_bw.values(
+    #         row["chr"],
+    #         row["start"],
+    #         row["end"])) if i != 0]),
+    #     axis=1)
 
-    # pd.set_option('display.max_columns', None)
-    # is_present_causal_sj(dat, TRUTH_SET["CLA_180CJ_DP_2"])
-    # print("-----------------------------------")
-    dat["normalized_by_coverage"] = dat["sj_coverage"] - dat["gene"].map(
+    dat["normalized_by_coverage"] = dat["uniquely_mapped"] / dat["gene"].map(
         mean_gene_coverage_dict)
-    print(mean_gene_coverage_dict["RYR1"])
+    # pd.set_option('display.max_columns', None)
+    # print("-----------------------------------")
+    # dat["normalized_by_coverage"] = dat["sj_coverage"] / dat["gene"].map(
+    #     mean_intron_coverage_dict)
+    # dat["normalized_by_coverage"] = dat["uniquely_mapped"] / dat.apply(lambda row:
+    #                                                                    get_mean_adjacent_exon_coverage(
+    #                                                                        coverage_bw,
+    #                                                                        row["chr"],
+    #                                                                        row["start"],
+    #                                                                        row["end"]),
+    #                                                                    axis=1)
+    # print(mean_gene_coverage_dict["RYR1"])
+    # print(mean_intron_coverage_dict["RYR1"])
 
     return dat
 
@@ -320,9 +431,10 @@ def get_exon_coverage(bw, chr, start, end, gene_name=None):
         cur_mane_exons = mane_exons_in_disease_genes[
             mane_exons_in_disease_genes["gene"] == gene_name]
 
+    cur_mane_exons = cur_mane_exons.drop_duplicates(subset=["chr", "start", "end"])
+
     total_exon_coverage = 0
     num_of_bases = 0
-    all_bases = []
     for i in range(cur_mane_exons.shape[0]):
         chr = cur_mane_exons.iloc[i, 0]
         start = cur_mane_exons.iloc[i, 1]
@@ -331,15 +443,35 @@ def get_exon_coverage(bw, chr, start, end, gene_name=None):
 
         coverage = list(bw.values(chr, start, end))
         total_exon_coverage += np.nansum(coverage)
-        all_bases += coverage
 
-    return total_exon_coverage, num_of_bases, all_bases
+    return total_exon_coverage, num_of_bases
+
+
+def get_mean_adjacent_exon_coverage(bw, chr, sj_start, sj_end):
+    cur_chr_disease_genes = mane_exons_in_disease_genes[
+        mane_exons_in_disease_genes["chr"] == chr]
+    exon1 = cur_chr_disease_genes[cur_chr_disease_genes["end"] == sj_start]
+
+    if exon1.shape[0] > 1:
+        raise Exception(f"More than one exon found ending at {chr}:{sj_start}.")
+    exon1_start = list(exon1["start"])[0]
+    exon1_end = list(exon1["end"])[0]
+    exon1_coverage = np.nansum(list(bw.values(chr, exon1_start, exon1_end)))
+
+    exon2 = cur_chr_disease_genes[cur_chr_disease_genes["start"] == sj_end]
+    if exon2.shape[0] > 1:
+        raise Exception(f"More than one exon found starting at {chr}:{sj_end}.")
+    exon2_start = list(exon2["start"])[0]
+    exon2_end = list(exon2["end"])[0]
+    exon2_coverage = np.nansum(list(bw.values(chr, exon2_start, exon2_end)))
+
+    return (exon1_coverage + exon2_coverage) / 2
 
 
 def get_intron_coverage(bw, chr, start, end, gene_name=None):
-    exon_coverage = get_exon_coverage(bw, chr, start, end, gene_name)[0]
+    exon_coverage, num_of_bases = get_exon_coverage(bw, chr, start, end, gene_name)
     total_coverage = np.nansum(bw.values(chr, start, end))
-    return total_coverage - exon_coverage
+    return total_coverage - exon_coverage, end - start - num_of_bases
 
 
 def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
@@ -354,6 +486,7 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
     filtered_bed_dat = filter_to_disease_genes(bed_dat, DISEASE_GENES)
     filtered_gtex_normalized_dat = filter_to_disease_genes(gtex_normalized_dat,
                                                            DISEASE_GENES)
+
     print(filtered_bed_dat.shape)
     # casual_sj = TRUTH_SET[sample_id]
     # is_present = is_present_causal_sj(filtered_bed_dat, casual_sj)
@@ -369,10 +502,10 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
     filtered_bed_dat = compare_with_gtex(normalized_gtex_normalized_dat,
                                          normalized_filtered_bed_dat,
                                          lr_sj_threshold=2,
-                                         lr_coverage_threshold=2)
+                                         lr_coverage_threshold=5,
+                                         cur_sample=sample_id)
     print(filtered_bed_dat.shape)
     grouped_gene = filtered_bed_dat.groupby("gene").size()
-    print(grouped_gene)
 
     # 4. Compare coverage with GTEx data.
 
@@ -403,10 +536,9 @@ def main():
 
     gtex_normalized_dat = read_junctions_bed(GTEx_NORMALIZED_BED, USE_COLS)
     gtex_normalized_dat = filter_by_uniquely_mapped_reads(gtex_normalized_dat, 1)
-
     for cur_sample in TRUTH_SET:
-        if cur_sample != "CLA_180CJ_DP_2":
-            continue
+        # if cur_sample != "205E_BD_M1":
+        #     continue
         if cur_sample in BATCH_2023:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2023_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
         elif cur_sample in BATCH_2022:
@@ -448,8 +580,88 @@ if __name__ == "__main__":
     # print(values)
     mane_exons = pd.read_csv("MANE_exon_1based_start.tsv", sep="\t")
     mane_exons_in_disease_genes = filter_to_disease_genes(mane_exons, DISEASE_GENES)
-    print(mane_exons_in_disease_genes)
+    # print(mane_exons_in_disease_genes)
+    # mane_exons_in_disease_genes = mane_exons_in_disease_genes[
+    #     mane_exons_in_disease_genes["chr"] == "chr19"]
+    # print(mane_exons_in_disease_genes)
+    # test = mane_exons_in_disease_genes[mane_exons_in_disease_genes["end"] == 38467812]
+    # print(test)
+    # test2 = mane_exons_in_disease_genes[
+    #     mane_exons_in_disease_genes["start"] == 38468965]
+    # print(test2)
+
+    # Key: causal SJ, Value: a DataFrame with cols [sample_id, splicing_ratio, reads_by_exon_coverage]
+    # print(samples)
+    # print(causal_sj)
     main()
+    # print(validating_metrics)
+    # with open('validating_metrics_full.pkl', 'wb') as pickle_file:
+    #     pickle.dump(validating_metrics, pickle_file)
+
+    # with open('validating_metrics_full.pkl', 'rb') as file:
+    #     validating_metrics = pickle.load(file)
+    #
+    # print(validating_metrics)
+    #
+    # for key in validating_metrics:
+    #     plt.figure(figsize=(10, 8))
+    #     plt.scatter(validating_metrics[key]["sample_id"],
+    #                 validating_metrics[key]["splicing_percentage"])
+    #     plt.title(f"{key}_splicing_percentage")
+    #     plt.xlabel("sample")
+    #     plt.ylabel("splicing_percentage")
+    #     for i, label in enumerate(validating_metrics[key]["sample_id"]):
+    #         plt.annotate(label, (list(validating_metrics[key]["sample_id"])[i],
+    #                              list(validating_metrics[key]["splicing_percentage"])[i]),
+    #                      textcoords="offset points",
+    #                      xytext=(0, 10), ha='center')
+    #
+    #     plt.savefig(f"{key}_splicing_percentage.png")
+    #
+    #     plt.figure(figsize=(10, 8))
+    #     plt.scatter(validating_metrics[key]["sample_id"],
+    #                 validating_metrics[key]["coverage"])
+    #     plt.title(f"{key}_coverage")
+    #     plt.xlabel("sample")
+    #     plt.ylabel("coverage")
+    #     for i, label in enumerate(validating_metrics[key]["sample_id"]):
+    #         plt.annotate(label, (list(validating_metrics[key]["sample_id"])[i],
+    #                              list(validating_metrics[key]["coverage"])[i]),
+    #                      textcoords="offset points",
+    #                      xytext=(0, 10), ha='center')
+    #     plt.savefig(f"{key}_coverage.png")
+    #
+    #     plt.figure(figsize=(10, 8))
+    #     plt.scatter(validating_metrics[key]["sample_id"],
+    #                 validating_metrics[key]["lr_sj"])
+    #     plt.title(f"{key}_lr_sj")
+    #     plt.xlabel("sample")
+    #     plt.ylabel("lr_sj")
+    #     for i, label in enumerate(validating_metrics[key]["sample_id"]):
+    #         plt.annotate(label, (list(validating_metrics[key]["sample_id"])[i],
+    #                              list(validating_metrics[key]["lr_sj"])[i]),
+    #                      textcoords="offset points",
+    #                      xytext=(0, 10), ha='center')
+    #     plt.savefig(f"{key}_lr_sj.png")
+    #
+    #     plt.figure(figsize=(10, 8))
+    #     plt.scatter(validating_metrics[key]["sample_id"],
+    #                 validating_metrics[key]["lr_coverage"])
+    #     plt.title(f"{key}_lr_coverage")
+    #     plt.xlabel("sample")
+    #     plt.ylabel("lr_coverage")
+    #     for i, label in enumerate(validating_metrics[key]["sample_id"]):
+    #         plt.annotate(label, (list(validating_metrics[key]["sample_id"])[i],
+    #                              list(validating_metrics[key]["lr_coverage"])[i]),
+    #                      textcoords="offset points",
+    #                      xytext=(0, 10), ha='center')
+    #     plt.savefig(f"{key}_lr_coverage.png")
+
+    # bigwig_path = f"gs://tgg-rnaseq/batch_0/bigWig/CLA_180CJ_DP_2.bigWig"
+    # bw = read_coverage_bigwig(bigwig_path)
+    # c, b = get_intron_coverage(bw, "chr19", 38468964, 38469140)
+    # # c, b = get_intron_coverage(bw, "chr19", 38468376, 38468377)
+    # print(c, b, c/b)
 #     dat1 = pd.DataFrame([["chr1", 1, 2, 5, "A"], ["chr1", 3, 4, 5, "A"], ["chr1",
 # 3, 10, 5, "B"]])
 #     dat1.columns = ["chr", "start", "end", "uniquely_mapped", "gene"]
