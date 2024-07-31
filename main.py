@@ -6,6 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 import pyBigWig
+from scipy.stats import gmean
 import matplotlib.pyplot as plt
 import pickle
 
@@ -110,10 +111,19 @@ def filter_to_disease_genes(dat, genes_dict):
     return filtered_bed_dat
 
 
-# TODO: Change the & between start and end to |.
 # How to define if a splice junction is present in the filtered data based on the
 # 1kb-10kb window?
 def is_present_causal_sj(filtered_bed_dat, causal_sj):
+    causal_sj_row = filtered_bed_dat[
+        (filtered_bed_dat["chr"] == causal_sj.split(":")[0]) &
+        ((filtered_bed_dat["start"] == int(causal_sj.split(":")[1].split("-")[0])) |
+         (filtered_bed_dat["end"] == int(causal_sj.split(":")[1].split("-")[
+                                             1])))]
+    print(causal_sj_row)
+    return causal_sj_row.shape[0] > 0
+
+
+def is_present_causal_sj_exact(filtered_bed_dat, causal_sj):
     causal_sj_row = filtered_bed_dat[
         (filtered_bed_dat["chr"] == causal_sj.split(":")[0]) &
         (filtered_bed_dat["start"] == int(causal_sj.split(":")[1].split("-")[0])) &
@@ -175,7 +185,7 @@ def get_sj_different_between_dats(sample_dat, gtex_dat,
     # print(f"{TRUTH_SET[cur_sample]} is not present in {cur_sample}")
     # get the values of dict TRUTH_SET
     for cur_causal_sj in causal_sj:
-        if not is_present_causal_sj(merged_dat, cur_causal_sj):
+        if not is_present_causal_sj_exact(merged_dat, cur_causal_sj):
             # print(f"{cur_causal_sj} is not present in {cur_sample}")
             continue
 
@@ -247,6 +257,22 @@ def get_sj_different_between_dats(sample_dat, gtex_dat,
     return merged_dat
 
 
+def normalize_by_adjacent_sj(chr, start, end, compare_dat, rd_normalized_coverage,
+                             gene):
+    gene_start = int(DISEASE_GENES[gene].split(":")[1].split("-")[0])
+    gene_end = int(DISEASE_GENES[gene].split(":")[1].split("-")[1])
+    offset = 15000
+    compare_dat = compare_dat[(compare_dat["chr"] == chr) &
+                              (compare_dat["start"] >= gene_start) &
+                              (compare_dat["end"] <= gene_end) &
+                              (((compare_dat["start"] >= start - offset) & (compare_dat["start"] <= start + offset))
+                               | ((compare_dat["end"] >= end - offset) & (compare_dat["end"] <= end + offset)))]
+
+    if compare_dat.shape[0] == 0:
+        return 0
+    return abs(np.log2(rd_normalized_coverage / np.mean(compare_dat["normalized_by_coverage"])))
+
+
 def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                       lr_coverage_threshold, cur_sample):
     # in_rd_not_in_gtex_dat = get_sj_only_in_first_dat(dat, gtex_dat)
@@ -254,14 +280,28 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                                                                 gtex_normalized_dat)
     print("Number of splice junctions only in the sample data: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
-    gtex_mean_normalized_coverage_by_gene = gtex_normalized_dat.groupby("gene")[
-        "normalized_by_coverage"].mean()
-    gtex_gene_mean_normalized_coverage_dict = gtex_mean_normalized_coverage_by_gene.to_dict()
+    # gtex_mean_normalized_coverage_by_gene = gtex_normalized_dat.groupby("gene")[
+    #     "normalized_by_coverage"].mean()
+    # gtex_gene_mean_normalized_coverage_dict = gtex_mean_normalized_coverage_by_gene.to_dict()
+    # rd_mean_normalized_coverage_by_gene = dat.groupby("gene")[
+    #     "normalized_by_coverage"].mean()
+    # rd_gene_mean_normalized_coverage_dict = rd_mean_normalized_coverage_by_gene.to_dict()
+    #
+    # in_rd_not_in_gtex_normalized_dat["lr_coverage"] = abs(np.log2(
+    #     in_rd_not_in_gtex_normalized_dat["normalized_by_coverage"] / \
+    #     in_rd_not_in_gtex_normalized_dat["gene"].map(
+    #         rd_gene_mean_normalized_coverage_dict)))
 
-    in_rd_not_in_gtex_normalized_dat["lr_coverage"] = abs(np.log2(
-        in_rd_not_in_gtex_normalized_dat["normalized_by_coverage"] / \
-                                                              in_rd_not_in_gtex_normalized_dat["gene"].map(
-                                                              gtex_gene_mean_normalized_coverage_dict)))
+    in_rd_not_in_gtex_normalized_dat["lr_coverage"] = \
+        in_rd_not_in_gtex_normalized_dat.apply(lambda row:
+                                               normalize_by_adjacent_sj(row["chr"],
+                                                                        row["start"],
+                                                                        row["end"],
+                                                                        dat,
+                                                                        row["normalized_by_coverage"],
+                                                                        row["gene"]),
+                                               axis=1)
+
     print(sorted(in_rd_not_in_gtex_normalized_dat["lr_coverage"]))
     pd.set_option('display.max_columns', None)
     is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
@@ -269,7 +309,9 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
         in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= 3]
     print("Number of splice junctions only in the sample data after filtering: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
-    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(columns=["lr_coverage"])
+    print(in_rd_not_in_gtex_normalized_dat)
+    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(
+        columns=["lr_coverage"])
 
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
     in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
