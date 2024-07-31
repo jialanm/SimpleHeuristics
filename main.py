@@ -652,6 +652,7 @@ def main():
     plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
     plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates), s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
              ha='right', va='bottom', fontsize=15)
+    plt.xticks(rotation=45, ha='right')
     plt.savefig("num_sj_candidates.png")
 
 
