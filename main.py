@@ -261,16 +261,19 @@ def normalize_by_adjacent_sj(chr, start, end, compare_dat, rd_normalized_coverag
                              gene):
     gene_start = int(DISEASE_GENES[gene].split(":")[1].split("-")[0])
     gene_end = int(DISEASE_GENES[gene].split(":")[1].split("-")[1])
-    offset = 15000
+    offset = 10000
     compare_dat = compare_dat[(compare_dat["chr"] == chr) &
                               (compare_dat["start"] >= gene_start) &
                               (compare_dat["end"] <= gene_end) &
-                              (((compare_dat["start"] >= start - offset) & (compare_dat["start"] <= start + offset))
-                               | ((compare_dat["end"] >= end - offset) & (compare_dat["end"] <= end + offset)))]
+                              (((compare_dat["start"] >= start - offset) & (
+                                          compare_dat["start"] <= start + offset))
+                               | ((compare_dat["end"] >= end - offset) & (
+                                                  compare_dat["end"] <= end + offset)))]
 
     if compare_dat.shape[0] == 0:
         return 0
-    return abs(np.log2(rd_normalized_coverage / np.mean(compare_dat["normalized_by_coverage"])))
+    return abs(np.log2(
+        rd_normalized_coverage / np.mean(compare_dat["normalized_by_coverage"])))
 
 
 def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
@@ -298,15 +301,38 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                                                                         row["start"],
                                                                         row["end"],
                                                                         dat,
-                                                                        row["normalized_by_coverage"],
+                                                                        row[
+                                                                            "normalized_by_coverage"],
                                                                         row["gene"]),
                                                axis=1)
+    novel_threshold = 3
+
+    # Plot the distribution of lr_coverage
+    causal_sj = TRUTH_SET[cur_sample]
+    cur_chr = causal_sj.split(":")[0]
+    cur_start = int(causal_sj.split(":")[1].split("-")[0])
+    cur_end = int(causal_sj.split(":")[1].split("-")[1])
+    condition = ((in_rd_not_in_gtex_normalized_dat["chr"] == cur_chr) &
+                 ((in_rd_not_in_gtex_normalized_dat["start"] == cur_start) |
+                  (in_rd_not_in_gtex_normalized_dat["end"] == cur_end)))
+    colors = ["#ffd700" if cond else "#adaae1" for cond in condition]
+    plt.figure(figsize=(10, 8))
+    plt.scatter([i+1 for i in range(in_rd_not_in_gtex_normalized_dat.shape[0])],
+                in_rd_not_in_gtex_normalized_dat["lr_coverage"], c=colors)
+    plt.xlabel("Splice junctions")
+    plt.ylabel("Metric")
+    plt.title(f"Sample {cur_sample}: {causal_sj}")
+    plt.axhline(y=novel_threshold, color="#8da5c8", linestyle='--', linewidth=2)
+    plt.text(x=in_rd_not_in_gtex_normalized_dat.shape[0], y=3, s='y=3', color="#8da5c8",
+             ha='right', va='bottom', fontsize=15)
+    plt.savefig(f"{cur_sample}_novel_sj.png")
+
 
     print(sorted(in_rd_not_in_gtex_normalized_dat["lr_coverage"]))
     pd.set_option('display.max_columns', None)
     is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
     in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
-        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= 3]
+        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= novel_threshold]
     print("Number of splice junctions only in the sample data after filtering: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
     print(in_rd_not_in_gtex_normalized_dat)
@@ -571,7 +597,7 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
 
 
 def main():
-    captured_samples = []
+    captured_samples = pd.DataFrame(columns=["sample_id", "num_sj_captured"])
     number_of_candidates = []
     # gtex_dat = read_junctions_bed(GTEx, USE_COLS)
     # gtex_dat = filter_by_uniquely_mapped_reads(gtex_dat, 1)
@@ -605,7 +631,9 @@ def main():
               f" {filtered_bed_dat.shape[0]}.")
 
         if is_present:
-            captured_samples.append(cur_sample)
+            row_data = [cur_sample, filtered_bed_dat.shape[0]]
+            new_row = pd.DataFrame([row_data], columns=captured_samples.columns)
+            captured_samples = pd.concat([captured_samples, new_row], ignore_index=True)
 
     print(f"In total, {len(captured_samples)} out of {len(TRUTH_SET)} causal splice "
           f"junctions are "
@@ -613,6 +641,18 @@ def main():
           f"the truth set.")
     print(captured_samples)
     print(np.mean(number_of_candidates), np.median(number_of_candidates))
+
+    captured_samples = captured_samples.sort_values(by="num_sj_captured",
+                                                    ascending=False)
+    plt.figure(figsize=(10, 8))
+    plt.bar(captured_samples["sample_id"], captured_samples["num_sj_captured"], color="#c8dbb9")
+    plt.xlabel("Sample")
+    plt.ylabel("Number of splice junction candidates")
+    plt.title("Number of splice junction candidates for each sample in truth set.")
+    plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
+    plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates), s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
+             ha='right', va='bottom', fontsize=15)
+    plt.savefig("num_sj_candidates.png")
 
 
 if __name__ == "__main__":
