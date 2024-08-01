@@ -321,7 +321,7 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                 in_rd_not_in_gtex_normalized_dat["lr_coverage"], c=colors)
     plt.xlabel("Splice junctions")
     plt.ylabel("Metric")
-    plt.title(f"Sample {cur_sample}: {causal_sj}")
+    plt.title(f"Novel splice junctions in sample {cur_sample}")
     plt.axhline(y=novel_threshold, color="#8da5c8", linestyle='--', linewidth=2)
     plt.text(x=in_rd_not_in_gtex_normalized_dat.shape[0], y=3, s='y=3', color="#8da5c8",
              ha='right', va='bottom', fontsize=15)
@@ -597,7 +597,8 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
 
 
 def main():
-    captured_samples = pd.DataFrame(columns=["sample_id", "num_sj_captured"])
+    captured_samples = pd.DataFrame(columns=["sample_id", "num_sj_candidates",
+                                             "captured"])
     number_of_candidates = []
     # gtex_dat = read_junctions_bed(GTEx, USE_COLS)
     # gtex_dat = filter_by_uniquely_mapped_reads(gtex_dat, 1)
@@ -631,24 +632,30 @@ def main():
               f" {filtered_bed_dat.shape[0]}.")
 
         if is_present:
-            row_data = [cur_sample, filtered_bed_dat.shape[0]]
-            new_row = pd.DataFrame([row_data], columns=captured_samples.columns)
-            captured_samples = pd.concat([captured_samples, new_row], ignore_index=True)
+            row_data = [cur_sample, filtered_bed_dat.shape[0], True]
+        else:
+            row_data = [cur_sample, filtered_bed_dat.shape[0], False]
+        new_row = pd.DataFrame([row_data], columns=captured_samples.columns)
+        captured_samples = pd.concat([captured_samples, new_row], ignore_index=True)
 
-    print(f"In total, {len(captured_samples)} out of {len(TRUTH_SET)} causal splice "
-          f"junctions are "
-          f"captured in "
-          f"the truth set.")
+    print(captured_samples[captured_samples['captured'] == True])
+    print(f"In total, "
+          f"{captured_samples[captured_samples['captured'] == True].shape[0]} out of"
+          f" {len(TRUTH_SET)} causal splice junctions are captured in the truth set.")
     print(captured_samples)
     print(np.mean(number_of_candidates), np.median(number_of_candidates))
 
-    captured_samples = captured_samples.sort_values(by="num_sj_captured",
+    captured_samples = captured_samples.sort_values(by="num_sj_candidates",
                                                     ascending=False)
-    plt.figure(figsize=(10, 8))
-    plt.bar(captured_samples["sample_id"], captured_samples["num_sj_captured"], color="#c8dbb9")
+    plot_conditions = (captured_samples["captured"] == True)
+    plot_colors = ["#c8dbb9" if cond else "#c85454" for cond in plot_conditions]
+    plt.figure(figsize=(12, 10))
+    plt.bar(captured_samples["sample_id"], captured_samples["num_sj_candidates"],
+            color=plot_colors)
     plt.xlabel("Sample")
     plt.ylabel("Number of splice junction candidates")
-    plt.title("Number of splice junction candidates for each sample in truth set.")
+    plt.ylim(0, 100)
+    plt.title("Number of splice junction candidates for each sample in truth set")
     plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
     plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates), s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
              ha='right', va='bottom', fontsize=15)
