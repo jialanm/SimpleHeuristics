@@ -34,7 +34,8 @@ DISEASE_GENES = {"PYROXD1": "chr12:21437615-21471250:+",
                  "LAMA2": "chr6:128883138-129516566:+",
                  "COL6A2": "chr21:46098112-46132848:+"}
 
-TRUTH_SET = {"41M_MW_M1": "chr12:21440448-21449562",
+TRUTH_SET = {
+             "41M_MW_M1": "chr12:21440448-21449562",
              "153BR_JB_M1": "chr2:151672680-151675286",
              "163BV_JE_M1": "chr2:151680828-151684777",
              "210DB_BW_M1": "chr19:38440864-38443557",
@@ -56,7 +57,15 @@ TRUTH_SET = {"41M_MW_M1": "chr12:21440448-21449562",
              "126BG_CB_M1": "chr22:33337801-33919994",
              "MBRU030_2": "chrX:153781828-153782120",
              "B14-78-1-U": "chr6:129453131-129454154",
-             "205E_BD_M1": "chr21:46126237-46131953"}
+             "205E_BD_M1": "chr21:46126237-46131953",
+             "253DY_HA_M1": "chrX:32501843-32518007",
+             "LIA_MAS02_2": "chrX:31348635-31444480",
+             "NH11-441": "chr21:45989778-45989893",
+             "BON_B16-59_1": "chr21:45989778-45990257",
+             "BON_B22_12_1_R1": "chr19:38505946-285063781",
+             "RGP_2058_3_M1": "chr21:45989778-45989874",
+             "BEG_1025-1_T999": "chrX:150596571-150619037",
+             }
 
 GTEx = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.junctions.bed.gz"
 GTEx_NORMALIZED_BED = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.junctions.bed.gz"
@@ -140,15 +149,21 @@ def filter_by_uniquely_mapped_reads(dat, threshold):
     return dat
 
 
-def get_sj_only_in_first_dat(dat1, dat2):
+def get_sj_only_in_first_dat(dat1, dat2, gtex):
     merged_dat = pd.merge(dat1, dat2, how="left", on=["chr", "start", "end"],
                           suffixes=('', '_y'),
                           indicator=True).query('_merge == "left_only"').drop(
         columns=['_merge'])
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
-    merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
-    merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
+    if gtex:
+        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
+        merged_dat = merged_dat[merged_dat["num_samples_with_this_junction"] /
+                                merged_dat["num_samples_total"] >= 0.7]
+        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
+    else:
+        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
+        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
     return merged_dat
 
 
@@ -265,10 +280,8 @@ def normalize_by_adjacent_sj(chr, start, end, compare_dat, rd_normalized_coverag
     compare_dat = compare_dat[(compare_dat["chr"] == chr) &
                               (compare_dat["start"] >= gene_start) &
                               (compare_dat["end"] <= gene_end) &
-                              (((compare_dat["start"] >= start - offset) & (
-                                          compare_dat["start"] <= start + offset))
-                               | ((compare_dat["end"] >= end - offset) & (
-                                                  compare_dat["end"] <= end + offset)))]
+                              ((compare_dat["start"] >= start - offset) & ((
+                                      compare_dat["end"] <= end + offset)))]
 
     if compare_dat.shape[0] == 0:
         return 0
@@ -280,7 +293,25 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                       lr_coverage_threshold, cur_sample):
     # in_rd_not_in_gtex_dat = get_sj_only_in_first_dat(dat, gtex_dat)
     in_rd_not_in_gtex_normalized_dat = get_sj_only_in_first_dat(dat,
-                                                                gtex_normalized_dat)
+                                                                gtex_normalized_dat,
+                                                                False)
+
+    in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
+                                                                dat,
+                                                                True)
+    print("Number of splice junctions only in the GTEx data: ",
+          in_gtex_normalized_not_in_rd_dat.shape[0])
+    in_gtex_normalized_not_in_rd_dat["lr_coverage"] = \
+        in_gtex_normalized_not_in_rd_dat.apply(lambda row:
+                                               normalize_by_adjacent_sj(row["chr"],
+                                                                        row["start"],
+                                                                        row["end"],
+                                                                        gtex_normalized_dat,
+                                                                        row[
+                                                                            "normalized_by_coverage"],
+                                                                        row["gene"]),
+                                               axis=1)
+
     print("Number of splice junctions only in the sample data: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
     # gtex_mean_normalized_coverage_by_gene = gtex_normalized_dat.groupby("gene")[
@@ -308,40 +339,46 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
     novel_threshold = 3
 
     # Plot the distribution of lr_coverage
-    causal_sj = TRUTH_SET[cur_sample]
-    cur_chr = causal_sj.split(":")[0]
-    cur_start = int(causal_sj.split(":")[1].split("-")[0])
-    cur_end = int(causal_sj.split(":")[1].split("-")[1])
-    condition = ((in_rd_not_in_gtex_normalized_dat["chr"] == cur_chr) &
-                 ((in_rd_not_in_gtex_normalized_dat["start"] == cur_start) |
-                  (in_rd_not_in_gtex_normalized_dat["end"] == cur_end)))
-    colors = ["#ffd700" if cond else "#adaae1" for cond in condition]
-    plt.figure(figsize=(10, 8))
-    plt.scatter([i+1 for i in range(in_rd_not_in_gtex_normalized_dat.shape[0])],
-                in_rd_not_in_gtex_normalized_dat["lr_coverage"], c=colors)
-    plt.xlabel("Splice junctions")
-    plt.ylabel("Metric")
-    plt.title(f"Novel splice junctions in sample {cur_sample}")
-    plt.axhline(y=novel_threshold, color="#8da5c8", linestyle='--', linewidth=2)
-    plt.text(x=in_rd_not_in_gtex_normalized_dat.shape[0], y=3, s='y=3', color="#8da5c8",
-             ha='right', va='bottom', fontsize=15)
-    plt.savefig(f"{cur_sample}_novel_sj.png")
-
+    # causal_sj = TRUTH_SET[cur_sample]
+    # cur_chr = causal_sj.split(":")[0]
+    # cur_start = int(causal_sj.split(":")[1].split("-")[0])
+    # cur_end = int(causal_sj.split(":")[1].split("-")[1])
+    # condition = ((in_rd_not_in_gtex_normalized_dat["chr"] == cur_chr) &
+    #              ((in_rd_not_in_gtex_normalized_dat["start"] == cur_start) |
+    #               (in_rd_not_in_gtex_normalized_dat["end"] == cur_end)))
+    # colors = ["#ffd700" if cond else "#adaae1" for cond in condition]
+    # plt.figure(figsize=(10, 8))
+    # plt.scatter([i + 1 for i in range(in_rd_not_in_gtex_normalized_dat.shape[0])],
+    #             in_rd_not_in_gtex_normalized_dat["lr_coverage"], c=colors)
+    # plt.xlabel("Splice junctions")
+    # plt.ylabel("Metric")
+    # plt.title(f"Novel splice junctions in sample {cur_sample}")
+    # plt.axhline(y=novel_threshold, color="#8da5c8", linestyle='--', linewidth=2)
+    # plt.text(x=in_rd_not_in_gtex_normalized_dat.shape[0], y=3, s='y=3', color="#8da5c8",
+    #          ha='right', va='bottom', fontsize=15)
+    # plt.savefig(f"{cur_sample}_novel_sj.png")
 
     print(sorted(in_rd_not_in_gtex_normalized_dat["lr_coverage"]))
     pd.set_option('display.max_columns', None)
     is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
     in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
         in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= novel_threshold]
+
+    in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat[
+        in_gtex_normalized_not_in_rd_dat["lr_coverage"] <= novel_threshold]
+
     print("Number of splice junctions only in the sample data after filtering: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
     print(in_rd_not_in_gtex_normalized_dat)
+
+    in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat.drop(
+        columns=["lr_coverage"])
     in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(
         columns=["lr_coverage"])
 
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
-    in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
-                                                                dat)
+    # in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
+    #                                                             dat)
     different_between_rd_and_gtex = get_sj_different_between_dats(dat,
                                                                   gtex_normalized_dat,
                                                                   lr_sj_threshold,
@@ -351,6 +388,7 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
     res = pd.concat([in_rd_not_in_gtex_normalized_dat,
                      # in_gtex_normalized_not_in_rd_dat,
                      different_between_rd_and_gtex])
+    res = pd.concat([res, in_gtex_normalized_not_in_rd_dat])
     return res
     # pass
     # diff_dat = pd.concat([in_rd_not_in_gtex_normalized_dat,
@@ -366,10 +404,17 @@ def read_junctions_bed(junctions_bed_path, use_cols=None):
     bed_dat = bed_dat[bed_dat["chr"].isin(CHROM_SET)]
     bed_dat = bed_dat.drop(columns=["uniquely_mapped"])
 
-    bed_dat[DESCRIPTION_COLS] = bed_dat[
+    description_cols = bed_dat["description"].iloc[0].split(";")
+    description_cols = [col.split("=")[0] for col in description_cols]
+
+    bed_dat[description_cols] = bed_dat[
         "description"].str.split(";", expand=True)
+    # TODO: calculate theses columns if they are not present in the description.
+    if "num_samples_with_this_junction" not in description_cols:
+        bed_dat["num_samples_with_this_junction"] = 0
+        bed_dat["num_samples_total"] = 0
     bed_dat = bed_dat.drop(columns=["description"])
-    for cur_col in DESCRIPTION_COLS:
+    for cur_col in description_cols:
         bed_dat[cur_col] = bed_dat[cur_col].str.split("=").str[1]
         bed_dat[cur_col] = bed_dat[cur_col].apply(convert_to_int)
 
@@ -406,6 +451,34 @@ def count_reads_with_same_donor_or_acceptor(reads_with_same_donor,
     # in the denominator.
     return uniquely_mapped / (
             reads_with_same_donor + reads_with_same_acceptor - uniquely_mapped)
+
+
+def get_mean_exon_covarege_within_a_gene_window(bw, sj_chr, sj_start, sj_end,
+                                                window_size,
+                                                gene_name):
+    cur_mane_exons = mane_exons_in_disease_genes[
+        mane_exons_in_disease_genes["gene"] == gene_name]
+    pd.set_option('display.max_columns', None)
+    cur_mane_exons = cur_mane_exons[(cur_mane_exons["chr"] == sj_chr) &
+                                    (cur_mane_exons["start"] >= sj_start - window_size)
+                                    & (cur_mane_exons["end"] <= sj_end + window_size)]
+
+    cur_mane_exons = cur_mane_exons.drop_duplicates(subset=["chr", "start", "end"])
+    if cur_mane_exons.shape[0] == 0:
+        return 1e-6
+
+    num_of_bases = 0
+    total_exon_coverage = 0
+    for i in range(cur_mane_exons.shape[0]):
+        cur_chr = cur_mane_exons.iloc[i, 0]
+        cur_start = cur_mane_exons.iloc[i, 1]
+        cur_end = cur_mane_exons.iloc[i, 2]
+        num_of_bases += cur_end - cur_start
+
+        coverage = list(bw.values(cur_chr, cur_start, cur_end))
+        total_exon_coverage += np.nansum(coverage)
+
+    return total_exon_coverage / num_of_bases
 
 
 def normalize_reads_by_gene(dat, coverage_bw):
@@ -472,6 +545,15 @@ def normalize_reads_by_gene(dat, coverage_bw):
 
     dat["normalized_by_coverage"] = dat["uniquely_mapped"] / dat["gene"].map(
         mean_gene_coverage_dict)
+    # window_size = 3000
+    # dat["normalized_by_coverage"] = dat["uniquely_mapped"] / dat.apply(lambda row:
+    #                                                                    get_mean_exon_covarege_within_a_gene_window(coverage_bw,
+    #                                                                                                                row["chr"],
+    #                                                                                                                row["start"],
+    #                                                                                                                row["end"],
+    #                                                                                                                window_size,
+    #                                                                                                                row["gene"]),
+    #                                                                       axis=1)
     # pd.set_option('display.max_columns', None)
     # print("-----------------------------------")
     # dat["normalized_by_coverage"] = dat["sj_coverage"] / dat["gene"].map(
@@ -504,12 +586,12 @@ def get_exon_coverage(bw, chr, start, end, gene_name=None):
     total_exon_coverage = 0
     num_of_bases = 0
     for i in range(cur_mane_exons.shape[0]):
-        chr = cur_mane_exons.iloc[i, 0]
-        start = cur_mane_exons.iloc[i, 1]
-        end = cur_mane_exons.iloc[i, 2]
-        num_of_bases += end - start
+        cur_chr = cur_mane_exons.iloc[i, 0]
+        cur_start = cur_mane_exons.iloc[i, 1]
+        cur_end = cur_mane_exons.iloc[i, 2]
+        num_of_bases += cur_end - cur_start
 
-        coverage = list(bw.values(chr, start, end))
+        coverage = list(bw.values(cur_chr, cur_start, cur_end))
         total_exon_coverage += np.nansum(coverage)
 
     return total_exon_coverage, num_of_bases
@@ -606,16 +688,17 @@ def main():
     gtex_normalized_dat = read_junctions_bed(GTEx_NORMALIZED_BED, USE_COLS)
     gtex_normalized_dat = filter_by_uniquely_mapped_reads(gtex_normalized_dat, 1)
     for cur_sample in TRUTH_SET:
-        # if cur_sample != "205E_BD_M1":
+        # if cur_sample != "BEG_1025-1_T999":
         #     continue
         if cur_sample in BATCH_2023:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2023_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
+            bigwig_path = f"gs://tgg-rnaseq/batch_2023_01/bigWig/{cur_sample}.bigWig"
         elif cur_sample in BATCH_2022:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2022_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
+            bigwig_path = f"gs://tgg-rnaseq/batch_2022_01/bigWig/{cur_sample}.bigWig"
         else:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_0/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
-
-        bigwig_path = f"gs://tgg-rnaseq/batch_0/bigWig/{cur_sample}.bigWig"
+            bigwig_path = f"gs://tgg-rnaseq/batch_0/bigWig/{cur_sample}.bigWig"
 
         bed_dat = read_junctions_bed(junctions_bed_path, USE_COLS)
         filtered_bed_dat = apply_filters(bed_dat, cur_sample,
@@ -647,20 +730,21 @@ def main():
 
     captured_samples = captured_samples.sort_values(by="num_sj_candidates",
                                                     ascending=False)
-    plot_conditions = (captured_samples["captured"] == True)
-    plot_colors = ["#c8dbb9" if cond else "#c85454" for cond in plot_conditions]
-    plt.figure(figsize=(12, 10))
-    plt.bar(captured_samples["sample_id"], captured_samples["num_sj_candidates"],
-            color=plot_colors)
-    plt.xlabel("Sample")
-    plt.ylabel("Number of splice junction candidates")
-    plt.ylim(0, 100)
-    plt.title("Number of splice junction candidates for each sample in truth set")
-    plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
-    plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates), s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
-             ha='right', va='bottom', fontsize=15)
-    plt.xticks(rotation=45, ha='right')
-    plt.savefig("num_sj_candidates.png")
+    # plot_conditions = (captured_samples["captured"] == True)
+    # plot_colors = ["#c8dbb9" if cond else "#c85454" for cond in plot_conditions]
+    # plt.figure(figsize=(12, 10))
+    # plt.bar(captured_samples["sample_id"], captured_samples["num_sj_candidates"],
+    #         color=plot_colors)
+    # plt.xlabel("Sample")
+    # plt.ylabel("Number of splice junction candidates")
+    # plt.ylim(0, 100)
+    # plt.title("Number of splice junction candidates for each sample in truth set")
+    # plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
+    # plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates),
+    #          s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
+    #          ha='right', va='bottom', fontsize=15)
+    # plt.xticks(rotation=45, ha='right')
+    # plt.savefig("num_sj_candidates.png")
 
 
 if __name__ == "__main__":
