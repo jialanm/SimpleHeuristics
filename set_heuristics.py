@@ -10,6 +10,12 @@ from scipy.stats import gmean
 import matplotlib.pyplot as plt
 import pickle
 
+UNIQUELY_MAPPED = 2
+MAXIMUM_OVERHANG = 20
+LR_COVERAGE_THRESHOLD = 5
+PERCENTAGE_THRESHOLD = 0.7
+NOVEL_SJ_THRESHOLD = 3
+
 CHROM_SET = set([f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"])
 DESCRIPTION_COLS = ["motif", "uniquely_mapped", "multi_mapped",
                     "maximum_spliced_alignment_overhang", "annotated_junction",
@@ -35,41 +41,41 @@ DISEASE_GENES = {"PYROXD1": "chr12:21437615-21471250:+",
                  "COL6A2": "chr21:46098112-46132848:+"}
 
 TRUTH_SET = {
-             "41M_MW_M1": "chr12:21440448-21449562",
-             "153BR_JB_M1": "chr2:151672680-151675286",
-             "163BV_JE_M1": "chr2:151680828-151684777",
-             "210DB_BW_M1": "chr19:38440864-38443557",
-             "T1244": "chr2:178622008-178624464",
-             "361AL_CC_M1": "chr2:237358583-237359205",
-             "149BP_AB_M1": "chr2:151498552-151499297",
-             "UC84-1RNA": "chr2:151531896-151534214",
-             "247DT_SH_M1": "chr2:151687733-151688371",
-             "373HQ_BTG_M1": "chr2:178580609-178581905",
-             "B11-48-1M": "chr1:46189357-46189457",
-             "TOP_MAAC031_F_Muscle1": "chrX:31590401-31595570",
-             "26I_SK_M1": "chr2:151531896-151533382",
-             "CLA_180CJ_DP_2": "chr19:38467812-38468965",
-             "UC316-1M": "chr21:45989778-45989893",
-             "UC393-1M": "chr21:45989778-45989893",
-             "49O_NM_M1": "chrX:32256704-32287528",
-             "MBEL028_002_1": "chr15:42399885-42401640",
-             "251DW_SD_M1": "chrX:31729748-31819974",
-             "126BG_CB_M1": "chr22:33337801-33919994",
-             "MBRU030_2": "chrX:153781828-153782120",
-             "B14-78-1-U": "chr6:129453131-129454154",
-             "205E_BD_M1": "chr21:46126237-46131953",
-             "253DY_HA_M1": "chrX:32501843-32518007",
-             "LIA_MAS02_2": "chrX:31348635-31444480",
-             "NH11-441": "chr21:45989778-45989893",
-             "BON_B16-59_1": "chr21:45989778-45990257",
-             "BON_B22_12_1_R1": "chr19:38505946-285063781",
-             "RGP_2058_3_M1": "chr21:45989778-45989874",
-             "BEG_1025-1_T999": "chrX:150596571-150619037",
-             }
+    "41M_MW_M1": "chr12:21440448-21449562",
+    "153BR_JB_M1": "chr2:151672680-151675286",
+    "163BV_JE_M1": "chr2:151680828-151684777",
+    "210DB_BW_M1": "chr19:38433874-38440744",
+    "T1244": "chr2:178622008-178624464",
+    "361AL_CC_M1": "chr2:237358583-237359205",
+    "149BP_AB_M1": "chr2:151498552-151499297",
+    "UC84-1RNA": "chr2:151531896-151533441",
+    "247DT_SH_M1": "chr2:151687733-151688371",
+    "373HQ_BTG_M1": "chr2:178580609-178581905",
+    "B11-48-1M": "chr1:46189357-46189483",
+    "TOP_MAAC031_F_Muscle1": "chrX:31595644-31627672",
+    "26I_SK_M1": "chr2:151531896-151533382",
+    "CLA_180CJ_DP_2": "chr19:38467812-38468965",
+    "UC316-1M": "chr21:45989778-45989893",
+    "UC393-1M": "chr21:45989778-45989893",
+    "49O_NM_M1": "chrX:32256704-32287528",
+    "MBEL028_002_1": "chr15:42399885-42401640",
+    "251DW_SD_M1": "chrX:31729748-31819974",
+    "126BG_CB_M1": "chr22:33337801-33919994",
+    "MBRU030_2": "chrX:153781828-153782120",
+    "B14-78-1-U": "chr6:129453131-129454154",
+    "205E_BD_M1": "chr21:46126237-46131953",
+    "253DY_HA_M1": "chrX:32501842-32518007",
+    "LIA_MAS02_2": "chrX:31348634-31444480",
+    "NH11-441": "chr21:45989778-45989893",
+    "BON_B16-59_1": "chr21:45989778-45989893",
+    "BON_B22_12_1_R1": "chr19:38505946-38506321",
+    "RGP_2058_3_M1": "chr21:45989778-45989874",
+    "BEG_1025-1_T999": "chrX:150596570-150619037",
+}
 
 GTEx = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.junctions.bed.gz"
 GTEx_NORMALIZED_BED = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.junctions.bed.gz"
-GTEX_NORMALIZED_BIGWIG = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.bigWig"
+GTEx_NORMALIZED_BIGWIG = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.bigWig"
 
 BATCH_2023 = {"RGP_2058_3_M1", "BON_B22_12_1_R1"}
 BATCH_2022 = {"BON_B16-59_1"}
@@ -79,7 +85,7 @@ BATCH_2022 = {"BON_B16-59_1"}
 "253DY_HA_M1": "chrX:32518008",  # outside of all splice junctions?
 "126BG_CB_M1": "chr22:33337801-33919994",
 "RGP_2058_3_M1": "chr21:45989778-45989874",  # does not have num_samples_with_this_junction
-"BON_B22_12_1_R1": "chr19:38505946-285063781",  # does not have num_samples_with_this_junction
+"BON_B22_12_1_R1": "chr19:38505946-38506321",  # does not have num_samples_with_this_junction
 "MBRU030_2": "chrX:153781828-153782120", 
 "LIA_MAS02_2": "chrX:31118218-33340460", # causal sj not exact
 "BEG_1025-1_T999": "chrX:150598686",  # 150598686-150614588 (1 umapped) or 150598686-150638942 (0 umapped)
@@ -157,13 +163,14 @@ def get_sj_only_in_first_dat(dat1, dat2, gtex):
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
     if gtex:
-        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
+        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= UNIQUELY_MAPPED]
         merged_dat = merged_dat[merged_dat["num_samples_with_this_junction"] /
-                                merged_dat["num_samples_total"] >= 0.7]
-        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
+                                merged_dat["num_samples_total"] >= PERCENTAGE_THRESHOLD]
+        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= MAXIMUM_OVERHANG]
     else:
-        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= 2]
-        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >= 20]
+        merged_dat = merged_dat[merged_dat["uniquely_mapped"] >= UNIQUELY_MAPPED]
+        merged_dat = merged_dat[merged_dat["maximum_spliced_alignment_overhang"] >=
+                                MAXIMUM_OVERHANG]
     return merged_dat
 
 
@@ -195,7 +202,6 @@ def get_sj_different_between_dats(sample_dat, gtex_dat,
     # cur_sample = "UC84-1RNA"
     # causal_sj = TRUTH_SET[cur_sample]
     # is_present_causal_sj(merged_dat, causal_sj)
-    # #
     # is_present_causal_sj(merged_dat, TRUTH_SET[cur_sample])
     # print(f"{TRUTH_SET[cur_sample]} is not present in {cur_sample}")
     # get the values of dict TRUTH_SET
@@ -263,28 +269,32 @@ def get_sj_different_between_dats(sample_dat, gtex_dat,
     print("-----------------------------------")
     # merged_dat = merged_dat[(merged_dat["lr_sj"] > lr_sj_threshold) | (
     #         merged_dat["lr_coverage"] > lr_coverage_threshold)]
-    merged_dat = merged_dat[(merged_dat["lr_coverage"] > lr_coverage_threshold)]
+    merged_dat = merged_dat[(merged_dat["lr_coverage"] >= lr_coverage_threshold)]
 
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
-    merged_dat = merged_dat.drop(columns=["lr_sj", "lr_coverage"])
+    # merged_dat = merged_dat.drop(columns=["lr_sj", "lr_coverage"])
 
     return merged_dat
 
 
 def normalize_by_adjacent_sj(chr, start, end, compare_dat, rd_normalized_coverage,
                              gene):
+    # TODO: include splice junctions that are in unannotated gene regions
     gene_start = int(DISEASE_GENES[gene].split(":")[1].split("-")[0])
     gene_end = int(DISEASE_GENES[gene].split(":")[1].split("-")[1])
     offset = 10000
     compare_dat = compare_dat[(compare_dat["chr"] == chr) &
                               (compare_dat["start"] >= gene_start) &
                               (compare_dat["end"] <= gene_end) &
-                              ((compare_dat["start"] >= start - offset) & ((
-                                      compare_dat["end"] <= end + offset)))]
+                              ((compare_dat["start"] >= start - offset) &
+                              ((compare_dat["end"] <= end + offset)))]
 
     if compare_dat.shape[0] == 0:
         return 0
+    print("check denominator")
+    print(np.mean(compare_dat["normalized_by_coverage"]))
+    print(compare_dat)
     return abs(np.log2(
         rd_normalized_coverage / np.mean(compare_dat["normalized_by_coverage"])))
 
@@ -295,7 +305,8 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
     in_rd_not_in_gtex_normalized_dat = get_sj_only_in_first_dat(dat,
                                                                 gtex_normalized_dat,
                                                                 False)
-
+    print("test1:")
+    print(f"Number of splice junctions only in the sample data: {in_rd_not_in_gtex_normalized_dat.shape[0]}")
     in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
                                                                 dat,
                                                                 True)
@@ -311,9 +322,6 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                                                                             "normalized_by_coverage"],
                                                                         row["gene"]),
                                                axis=1)
-
-    print("Number of splice junctions only in the sample data: ",
-          in_rd_not_in_gtex_normalized_dat.shape[0])
     # gtex_mean_normalized_coverage_by_gene = gtex_normalized_dat.groupby("gene")[
     #     "normalized_by_coverage"].mean()
     # gtex_gene_mean_normalized_coverage_dict = gtex_mean_normalized_coverage_by_gene.to_dict()
@@ -336,7 +344,8 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                                                                             "normalized_by_coverage"],
                                                                         row["gene"]),
                                                axis=1)
-    novel_threshold = 3
+    pd.set_option('display.max_columns', None)
+    # novel_threshold = 3
 
     # Plot the distribution of lr_coverage
     # causal_sj = TRUTH_SET[cur_sample]
@@ -362,19 +371,15 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
     pd.set_option('display.max_columns', None)
     is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
     in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
-        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= novel_threshold]
+        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= NOVEL_SJ_THRESHOLD]
+
 
     in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat[
-        in_gtex_normalized_not_in_rd_dat["lr_coverage"] <= novel_threshold]
+        in_gtex_normalized_not_in_rd_dat["lr_coverage"] <= NOVEL_SJ_THRESHOLD]
 
     print("Number of splice junctions only in the sample data after filtering: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
     print(in_rd_not_in_gtex_normalized_dat)
-
-    in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat.drop(
-        columns=["lr_coverage"])
-    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(
-        columns=["lr_coverage"])
 
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
     # in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
@@ -385,16 +390,66 @@ def compare_with_gtex(gtex_normalized_dat, dat, lr_sj_threshold,
                                                                   lr_coverage_threshold,
                                                                   cur_sample)
 
-    res = pd.concat([in_rd_not_in_gtex_normalized_dat,
-                     # in_gtex_normalized_not_in_rd_dat,
-                     different_between_rd_and_gtex])
-    res = pd.concat([res, in_gtex_normalized_not_in_rd_dat])
-    return res
-    # pass
-    # diff_dat = pd.concat([in_rd_not_in_gtex_normalized_dat,
-    #                       in_gtex_normalized_not_in_rd_dat],
-    #                       axis=0, ignore_index=True)
-    # return diff_dat
+    if is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample]):
+        print("here1")
+        rank = get_rank_of_causal_sj(in_rd_not_in_gtex_normalized_dat,
+                                     TRUTH_SET[cur_sample],
+                                     "lr_coverage", True)
+    elif is_present_causal_sj(in_gtex_normalized_not_in_rd_dat, TRUTH_SET[cur_sample]):
+        print("here2")
+        rank = get_rank_of_causal_sj(in_gtex_normalized_not_in_rd_dat,
+                                     TRUTH_SET[cur_sample],
+                                     "lr_coverage", True)
+    elif is_present_causal_sj(different_between_rd_and_gtex, TRUTH_SET[cur_sample]):
+        print("here3")
+        rank = get_rank_of_causal_sj(different_between_rd_and_gtex,
+                                     TRUTH_SET[cur_sample],
+                                     "lr_coverage", False)
+    else:
+        rank = -1
+
+    in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat.drop(
+        columns=["lr_coverage"])
+    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat.drop(
+        columns=["lr_coverage"])
+    different_between_rd_and_gtex = different_between_rd_and_gtex.drop(columns=[
+        "lr_sj", "lr_coverage"])
+
+    res = pd.concat([
+                     in_rd_not_in_gtex_normalized_dat,
+                     in_gtex_normalized_not_in_rd_dat,
+                     different_between_rd_and_gtex
+    ])
+    print(f"In sample but not in GTEx: {in_rd_not_in_gtex_normalized_dat.shape[0]}")
+    print(f"In GTEx but not in sample: {in_gtex_normalized_not_in_rd_dat.shape[0]}")
+    print(f"In both: {different_between_rd_and_gtex.shape[0]}")
+    return res, rank
+
+
+def get_rank_of_causal_sj(dat, causal_sj, col, ascending):
+    cur_chr = causal_sj.split(":")[0]
+    cur_start = int(causal_sj.split(":")[1].split("-")[0])
+    cur_end = int(causal_sj.split(":")[1].split("-")[1])
+    print(dat)
+    print(cur_chr, cur_start, cur_end)
+    print(causal_sj)
+    dat = dat.sort_values(by=col, ascending=ascending)
+    dat = dat.reset_index(drop=True)
+    matching_start_index = dat[(dat["chr"] == cur_chr) &
+                               (dat["start"] == cur_start)].index
+    if len(matching_start_index) > 0:
+        matching_start_index = matching_start_index[0]
+    else:
+        matching_start_index = float("inf")
+
+    matching_end_index = dat[(dat["chr"] == cur_chr) &
+                             (dat["end"] == cur_end)].index
+    if len(matching_end_index) > 0:
+        matching_end_index = matching_end_index[0]
+    else:
+        matching_end_index = float("inf")
+    matching_index = min(matching_start_index, matching_end_index)
+    return matching_index + 1
 
 
 def read_junctions_bed(junctions_bed_path, use_cols=None):
@@ -543,6 +598,8 @@ def normalize_reads_by_gene(dat, coverage_bw):
     #         row["end"])) if i != 0]),
     #     axis=1)
 
+    print("mean coverage")
+    print(mean_gene_coverage_dict["PYROXD1"])
     dat["normalized_by_coverage"] = dat["uniquely_mapped"] / dat["gene"].map(
         mean_gene_coverage_dict)
     # window_size = 3000
@@ -572,6 +629,8 @@ def normalize_reads_by_gene(dat, coverage_bw):
 
 
 def get_exon_coverage(bw, chr, start, end, gene_name=None):
+    # TODO: use more sophisiticated way to get the coverage of the gene rather than
+    #  mane exons.
     if gene_name is None:
         cur_mane_exons = mane_exons_in_disease_genes[
             (mane_exons_in_disease_genes["chr"] == chr) &
@@ -630,30 +689,33 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
     # Decision rules to filter out splice junctions.
     # 1. Keep only splice junctions that have at least 1 uniquely mapped reads.
     bed_dat = filter_by_uniquely_mapped_reads(bed_dat, 1)
+    # print("number here1")
     print(bed_dat.shape)
+    print(bed_dat.columns)
 
     # 2. Filter to known disease genes.
     filtered_bed_dat = filter_to_disease_genes(bed_dat, DISEASE_GENES)
     filtered_gtex_normalized_dat = filter_to_disease_genes(gtex_normalized_dat,
                                                            DISEASE_GENES)
 
+    # print("number here2")
     print(filtered_bed_dat.shape)
-    # casual_sj = TRUTH_SET[sample_id]
+    # causal_sj = TRUTH_SET[sample_id]
     # is_present = is_present_causal_sj(filtered_bed_dat, casual_sj)
 
     # 3. Compare reads and coverage with GTEx data.
     # Get the coverage file.
     bw = read_coverage_bigwig(bigwig_path)
-    gtex_bw = read_coverage_bigwig(GTEX_NORMALIZED_BIGWIG)
+    gtex_bw = read_coverage_bigwig(GTEx_NORMALIZED_BIGWIG)
 
     normalized_filtered_bed_dat = normalize_reads_by_gene(filtered_bed_dat, bw)
     normalized_gtex_normalized_dat = normalize_reads_by_gene(
         filtered_gtex_normalized_dat, gtex_bw)
-    filtered_bed_dat = compare_with_gtex(normalized_gtex_normalized_dat,
-                                         normalized_filtered_bed_dat,
-                                         lr_sj_threshold=2,
-                                         lr_coverage_threshold=5,
-                                         cur_sample=sample_id)
+    filtered_bed_dat, rank = compare_with_gtex(normalized_gtex_normalized_dat,
+                                               normalized_filtered_bed_dat,
+                                               lr_sj_threshold=2,
+                                               lr_coverage_threshold=LR_COVERAGE_THRESHOLD,
+                                               cur_sample=sample_id)
     print(filtered_bed_dat.shape)
     grouped_gene = filtered_bed_dat.groupby("gene").size()
 
@@ -675,12 +737,12 @@ def apply_filters(bed_dat, sample_id, gtex_normalized_dat, bigwig_path):
 
     # pd.set_option('display.max_columns', None)
     # print(filtered_bed_dat)
-    return filtered_bed_dat
+    return filtered_bed_dat, rank
 
 
 def main():
     captured_samples = pd.DataFrame(columns=["sample_id", "num_sj_candidates",
-                                             "captured"])
+                                             "captured", "rank"])
     number_of_candidates = []
     # gtex_dat = read_junctions_bed(GTEx, USE_COLS)
     # gtex_dat = filter_by_uniquely_mapped_reads(gtex_dat, 1)
@@ -688,8 +750,8 @@ def main():
     gtex_normalized_dat = read_junctions_bed(GTEx_NORMALIZED_BED, USE_COLS)
     gtex_normalized_dat = filter_by_uniquely_mapped_reads(gtex_normalized_dat, 1)
     for cur_sample in TRUTH_SET:
-        # if cur_sample != "BEG_1025-1_T999":
-        #     continue
+        if cur_sample != "UC84-1RNA":
+            continue
         if cur_sample in BATCH_2023:
             junctions_bed_path = f"gs://tgg-rnaseq/batch_2023_01/junctions_bed_for_igv_js/{cur_sample}.junctions.bed.gz"
             bigwig_path = f"gs://tgg-rnaseq/batch_2023_01/bigWig/{cur_sample}.bigWig"
@@ -701,9 +763,9 @@ def main():
             bigwig_path = f"gs://tgg-rnaseq/batch_0/bigWig/{cur_sample}.bigWig"
 
         bed_dat = read_junctions_bed(junctions_bed_path, USE_COLS)
-        filtered_bed_dat = apply_filters(bed_dat, cur_sample,
-                                         gtex_normalized_dat,
-                                         bigwig_path)
+        filtered_bed_dat, rank = apply_filters(bed_dat, cur_sample,
+                                               gtex_normalized_dat,
+                                               bigwig_path)
 
         number_of_candidates.append(filtered_bed_dat.shape[0])
         # Check if the causal splice junction is in the filtered data.
@@ -715,9 +777,9 @@ def main():
               f" {filtered_bed_dat.shape[0]}.")
 
         if is_present:
-            row_data = [cur_sample, filtered_bed_dat.shape[0], True]
+            row_data = [cur_sample, filtered_bed_dat.shape[0], True, rank]
         else:
-            row_data = [cur_sample, filtered_bed_dat.shape[0], False]
+            row_data = [cur_sample, filtered_bed_dat.shape[0], False, rank]
         new_row = pd.DataFrame([row_data], columns=captured_samples.columns)
         captured_samples = pd.concat([captured_samples, new_row], ignore_index=True)
 
@@ -730,21 +792,66 @@ def main():
 
     captured_samples = captured_samples.sort_values(by="num_sj_candidates",
                                                     ascending=False)
-    # plot_conditions = (captured_samples["captured"] == True)
-    # plot_colors = ["#c8dbb9" if cond else "#c85454" for cond in plot_conditions]
-    # plt.figure(figsize=(12, 10))
-    # plt.bar(captured_samples["sample_id"], captured_samples["num_sj_candidates"],
-    #         color=plot_colors)
-    # plt.xlabel("Sample")
-    # plt.ylabel("Number of splice junction candidates")
-    # plt.ylim(0, 100)
-    # plt.title("Number of splice junction candidates for each sample in truth set")
-    # plt.axhline(y=np.mean(number_of_candidates), color="#8da5c8", linestyle='--')
-    # plt.text(x=captured_samples.shape[0], y=np.mean(number_of_candidates),
-    #          s=f'y={np.mean(number_of_candidates)}', color="#8da5c8",
-    #          ha='right', va='bottom', fontsize=15)
-    # plt.xticks(rotation=45, ha='right')
-    # plt.savefig("num_sj_candidates.png")
+    # captured_samples.to_csv("captured_samples.csv", index=False)
+
+    # captured_samples = pd.read_csv("captured_samples.csv")
+    print(captured_samples)
+    number_of_candidates = list(captured_samples["num_sj_candidates"])
+    plot_conditions = (captured_samples["captured"] == True)
+    plot_colors = ["#c8dbb9" if cond else "#c85454" for cond in plot_conditions]
+    plt.figure(figsize=(20, 25))
+    plt.barh(captured_samples["sample_id"], captured_samples["num_sj_candidates"],
+             color=plot_colors)
+    plt.xlabel("Number of splice junction candidates", fontsize=50)
+    plt.ylabel("Samples", fontsize=50, rotation=0, ha='right', va='center')
+    # plt.yticks(fontsize=30)
+    plt.yticks([])
+    plt.xticks(fontsize=30)
+    plt.xlim(0, 150)
+    plt.axvline(x=np.mean(number_of_candidates), color="#8da5c8", linestyle='--',
+                linewidth=5)
+    # plt.text(x=np.mean(number_of_candidates) * 3.8,
+    #          y=captured_samples.shape[0] - 3,
+    #          s=f'average number of candidates\n='
+    #            f'{round(np.mean(number_of_candidates), 2)}',
+    #          color="#000000",
+    #          ha='right', va='bottom', fontsize=45, weight='bold')
+
+    plt.savefig("num_sj_candidates_2.png", bbox_inches='tight')
+
+    captured_samples = captured_samples[captured_samples["rank"] > 0]
+    captured_samples = captured_samples.sort_values(by="rank", ascending=False)
+    captured_samples.to_csv("captured_samples_heuristic.csv", index=False)
+
+    fraser2_benchmark_dat = pd.read_csv("fraser2_best_results.txt", sep="\t")
+    fraser2_benchmark_dat.columns = ["sample", "called_by_fraser2",
+                                     "num_of_sj_candidates", "rank"]
+    fraser2_benchmark_dat_called = set(list(fraser2_benchmark_dat[fraser2_benchmark_dat[
+        "rank"]>0]["sample"]))
+    print(fraser2_benchmark_dat_called)
+    print(len(fraser2_benchmark_dat_called))
+    captured_samples["called_by_fraser2"] = captured_samples["sample_id"].apply(
+        lambda x: "Yes" if x in fraser2_benchmark_dat_called else "No")
+    print(captured_samples)
+    plot_conditions = (captured_samples["called_by_fraser2"] == "Yes")
+    plot_colors = ["#8da5c8" if cond else "#c8dbb9" for cond in plot_conditions]
+
+
+    plt.figure(figsize=(20, 25))
+    plt.barh(captured_samples["sample_id"], captured_samples["rank"],
+             color=plot_colors)
+    plt.xlabel("Rank of Causal Splice Junctions", fontsize=30)
+    plt.yticks(fontsize=30)
+    plt.xticks(np.arange(0, 19, 1), fontsize=30)
+    plt.axvline(x=np.mean(captured_samples["rank"]), color="#8da5c8", linestyle='--',
+                linewidth=5)
+    plt.text(x=np.mean(captured_samples["rank"]) * 4,
+             y=captured_samples.shape[0] - 3,
+             s=f'average rank of\ncausal splice junctions\n'
+               f'={round(np.mean(captured_samples["rank"]), 2)}',
+             color="#000000",
+             ha='right', va='bottom', fontsize=45, weight='bold')
+    plt.savefig("rank.png", bbox_inches='tight')
 
 
 if __name__ == "__main__":
