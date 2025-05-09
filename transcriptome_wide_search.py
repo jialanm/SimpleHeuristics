@@ -19,12 +19,15 @@ from tgg_rnaseq_pipelines.rnaseq_sample_metadata.metadata_utils import (
     read_from_airtable, RNA_SEQ_BASE_ID, DATA_PATHS_TABLE_ID, DATA_PATHS_VIEW_ID)
 
 LOCAL_GENE_SIZE = 100000
-NOVEL_SJ_THRESHOLD = 1.5
+NOVEL_SJ_THRESHOLD = -1.5
 MUSCLE_SAMPLE_TOTAL = 194
 SAMPLE_USE_COLS = ["chr", "start", "end", "strand", "uniquely_mapped",
                    "maximum_spliced_alignment_overhang"]
 
+# TODO: change the threshold
 UNIQUE_READS_THRESHOLD = 7
+# UNIQUE_READS_THRESHOLD = 2
+LR_COVERAGE_THRESHOLD = 6
 
 def get_genome_interval(chrom, start, end):
     return f"{chrom}:{start + 1}-{end}"
@@ -134,19 +137,24 @@ def normalize_reads_by_gene(dat, cur_gene_coverage_dict=None):
                                                                       coords_gene_end_dict),
                                             axis=1)
     # TODO: uncomment the following line.
-    # dat["normalized_by_coverage"] = dat.apply(lambda row: (row["uniquely_mapped"] /
-    #                                                       cur_gene_coverage_dict[row["gene_with_imputation"]])
-    #                                                       if cur_gene_coverage_dict[row["gene_with_imputation"]] != 0 else 1e6,
-    #                                           axis=1)
+    dat["normalized_by_coverage"] = dat.apply(lambda row: (row["uniquely_mapped"] /
+                                                          cur_gene_coverage_dict[row["gene_with_imputation"]])
+                                                          if cur_gene_coverage_dict[row["gene_with_imputation"]] != 0 else np.inf,
+                                              axis=1)
+    # TODO: think about how to do with genes with zero coverage.
+    dat = dat[~(dat["normalized_by_coverage"] == np.inf)]
     dat["gene"] = dat["gene_with_imputation"]
     dat.drop(columns=["gene_with_imputation"], inplace=True)
     return dat
 
 
-def get_sj_different_between_dats(sample_dat, gtex_dat,
-                                  lr_coverage_threshold):
+def get_sj_different_between_dats(sample_dat, gtex_dat):
+    print("gsdjlkgejs")
     pd.set_option('display.max_columns', None)
-    merged_dat = pd.merge(sample_dat, gtex_dat, how='inner', on=["chr", "start", "end"],
+
+    print(is_present_causal_sj(sample_dat, TRUTH_SET[cur_sample]))
+    merged_dat = pd.merge(sample_dat, gtex_dat, how='inner', on=["chr", "start",
+                                                                 "end", "gene"],
                           suffixes=('', '_y'))
     pseudocount = 1e-12
 
@@ -155,7 +163,9 @@ def get_sj_different_between_dats(sample_dat, gtex_dat,
 
     merged_dat["lr_coverage"] = abs(np.log2(coverage_ratio))
 
-    merged_dat = merged_dat[(merged_dat["lr_coverage"] >= lr_coverage_threshold)]
+    print(is_present_causal_sj(merged_dat, TRUTH_SET[cur_sample]))
+
+    merged_dat = merged_dat[(merged_dat["lr_coverage"] >= LR_COVERAGE_THRESHOLD)]
 
     merged_dat = merged_dat.drop(
         columns=[col for col in merged_dat.columns if col.endswith("_y")])
@@ -191,9 +201,10 @@ def compare_with_adjacent_sj(dat, chrom, start, end, uniquely_mapped,
 
     # No adjacent SJs within a 10kb window. High chance this is noise.
     if window.shape[0] == 0:
-        return 1e5
+        return np.inf
 
-    return abs(np.log2(uniquely_mapped / np.mean(window["uniquely_mapped"])))
+    ratio = np.log2(uniquely_mapped / np.mean(window["uniquely_mapped"]))
+    return ratio
 
 
 def get_percentile(numbers, percentile_threshold):
@@ -208,21 +219,24 @@ def get_df_with_rare_dna_variants(vcf_filepath, rare_af_threshold):
 
     ht = mt.rows()
     print("Filtering to rare variants...")
-    ht = ht.filter(
-                        (ht.info.gnomad_genomes_AF <= rare_af_threshold) |
-                        (ht.info.cohort_AF <= rare_af_threshold)
-                   )
+    ht = ht.filter(ht.info.gnomad_genomes_AF <= rare_af_threshold)
     print(ht.count())
     ht = ht.select(ht.info.gnomad_genomes_AF,
                    ht.info.cohort_AF)
-    df = ht.to_pandas()
+
+    tsv_output_filpath = "./data/tmp_rare_variants.tsv.bgz"
+    ht.export(tsv_output_filpath)
+
+    df = pd.read_csv(tsv_output_filpath, sep="\t", compression="gzip")
     print(df)
 
     df["locus"] = df["locus"].astype(str)
     new_columns = ["chr", "pos"]
     df[new_columns] = df["locus"].str.split(":", expand=True)
-    rare_variant_loci = df[["chr", "pos", "alleles", "info.splice_ai"]]
-    rare_variant_loci.columns = ["chr", "pos", "alleles", "splice_ai"]
+    rare_variant_loci = df[["chr", "pos", "alleles"]]
+    rare_variant_loci.columns = ["chr", "pos", "alleles"]
+    # rare_variant_loci = df[["chr", "pos", "alleles", "info.splice_ai"]]
+    # rare_variant_loci.columns = ["chr", "pos", "alleles", "splice_ai"]
     rare_variant_loci["pos"] = rare_variant_loci["pos"].astype(int)
 
     return rare_variant_loci
@@ -240,25 +254,33 @@ def filter_by_rare_dna_variants(rare_variant_loci, chrom, start, end):
     # TODO: add spliceAI score filtering.
     if rare_variant_loci.shape[0] > 0:
         # splice_ai_null_loci = rare_variant_loci[rare_variant_loci["splice_ai"].isna()]
-        # for index, row in splice_ai_null_loci.iterrows():
-        #     variant = f"{row['chr']}-{row['pos']}-{row['alleles'][0]}-{row['alleles'][1]}"
-        #     if filter_by_spliceai_score(variant):
-        #         return True
-        #
+        for index, row in rare_variant_loci.iterrows():
+            variant = f"{row['chr']}-{row['pos']}-{row['alleles'][0]}-{row['alleles'][1]}"
+            if filter_by_spliceai_score(variant):
+                return True
+
         # splice_ai_not_null_loci = rare_variant_loci[rare_variant_loci["splice_ai"].notna()]
         # splice_ai_not_null_loci = splice_ai_not_null_loci[splice_ai_not_null_loci[
         #     "splice_ai"] >= 0.2]
         # if splice_ai_not_null_loci.shape[0] > 0:
-        return True
+        #     return True
 
     return False
 
 
-def filter_by_spliceai_score(variant, distance=1000, score_threshold=0.2):
+def filter_by_spliceai_score(variant, distance=1000, score_threshold=0.1):
     url = f"https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&&bc" \
           f"=comprehensive&variant" \
           f"={variant}&distance={distance}"
-    response = requests.get(url)
+
+    for i in range(3):
+        try:
+            response = requests.get(url)
+            break
+        except requests.exceptions.ConnectionError as e:
+            print("Connection failed, retrying...")
+            time.sleep(2)
+    # response = requests.get(url)
     data = response.json()
 
     if "error" not in data: # If there are scores returned.
@@ -275,10 +297,13 @@ def filter_by_spliceai_score(variant, distance=1000, score_threshold=0.2):
     return False
 
 
-def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat, lr_coverage_threshold,
+def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat,
                       cur_sample):
     # in_rd_not_in_gtex_dat = get_sj_only_in_first_dat(dat, gtex_dat)
     print("Get SJ only in first dat...")
+    pd.set_option('display.max_columns', None)
+    print(is_present_causal_sj(sample_normalized_dat, TRUTH_SET[cur_sample]))
+    print(is_present_causal_sj(gtex_normalized_dat, TRUTH_SET[cur_sample]))
     in_rd_not_in_gtex_normalized_dat = get_sj_only_in_first_dat(sample_normalized_dat,
                                                                 gtex_normalized_dat,
                                                                 False)
@@ -292,7 +317,7 @@ def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat, lr_coverage_th
     # in_rd_not_in_gtex_normalized_dat = pd.read_csv(f"{cur_sample}_in_rd_not_in_gtex_normalized_dat_1.tsv", sep="\t")
 
     # in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
-    #                                                             dat,
+    #                                                             sample_normalized_dat,
     #                                                             True)
     # in_gtex_normalized_not_in_rd_dat.to_csv(
     #     f"{cur_sample}_in_gtex_normalized_not_in_rd_dat_1.tsv",
@@ -321,6 +346,7 @@ def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat, lr_coverage_th
     #     in_rd_not_in_gtex_normalized_dat["gene"] == "PYROXD1"]
     # percentile_10_by_gene = sample_normalized_dat.groupby("gene")[
     #     "uniquely_mapped"].apply(get_percentile, 10)
+
     # TODO: uncomment down here
     # print("Getting percentile 10...")
     # percentile_to_use = 20
@@ -378,46 +404,64 @@ def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat, lr_coverage_th
                                                    row["uniquely_mapped"],
                                                    row["gene"]),
                                                axis=1)
+    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[~(
+        in_rd_not_in_gtex_normalized_dat["lr_coverage"] == np.inf)]
     # in_rd_not_in_gtex_normalized_dat.to_csv(
     #     f"{cur_sample}_in_rd_not_in_gtex_normalized_dat_2.tsv",
     #     sep="\t", index=False)
 
     # in_gtex_normalized_not_in_rd_dat = pd.read_csv(f"{cur_sample}_in_gtex_normalized_not_in_rd_dat_2.tsv", sep="\t")
     # in_rd_not_in_gtex_normalized_dat = pd.read_csv(f"{cur_sample}_in_rd_not_in_gtex_normalized_dat_2.tsv", sep="\t")
+    # TODO: uncomment the following section
     print(is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample]))
     in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
-        in_rd_not_in_gtex_normalized_dat["lr_coverage"] <= NOVEL_SJ_THRESHOLD]
+        in_rd_not_in_gtex_normalized_dat["lr_coverage"] >= NOVEL_SJ_THRESHOLD]
     print(in_rd_not_in_gtex_normalized_dat.shape)
 
     # in_gtex_normalized_not_in_rd_dat = in_gtex_normalized_not_in_rd_dat[
     #     in_gtex_normalized_not_in_rd_dat["lr_coverage"] <= NOVEL_SJ_THRESHOLD]
 
-    print("Filtering by DNA variants...")
-    in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"] = \
-        in_rd_not_in_gtex_normalized_dat.apply(lambda row: filter_by_rare_dna_variants(
-            cur_rare_variant_loci, row["chr"], row["start"], row["end"]),
-                                               axis=1)
-    print(in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"])
-    in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
-        in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"] == True]
+    # print("Filtering by DNA variants...")
+    # in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"] = \
+    #     in_rd_not_in_gtex_normalized_dat.apply(lambda row: filter_by_rare_dna_variants(
+    #         cur_rare_variant_loci, row["chr"], row["start"], row["end"]),
+    #                                            axis=1)
+    # print(in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"])
+    # in_rd_not_in_gtex_normalized_dat = in_rd_not_in_gtex_normalized_dat[
+    #     in_rd_not_in_gtex_normalized_dat["has_rare_dna_variant"] == True]
 
     print("Number of splice junctions only in the sample data after filtering: ",
           in_rd_not_in_gtex_normalized_dat.shape[0])
     is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample])
     print(in_rd_not_in_gtex_normalized_dat)
 
-    if is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample]):
-        print("Causal SJ is captured.")
-    else:
-        print("Causal SJ is missed.")
+    # if is_present_causal_sj(in_rd_not_in_gtex_normalized_dat, TRUTH_SET[cur_sample]):
+    #     print("Causal SJ is captured.")
+    # else:
+    #     print("Causal SJ is missed.")
 
     # in_gtex_not_in_rd_dat = get_sj_only_in_first_dat(gtex_dat, dat)
     # in_gtex_normalized_not_in_rd_dat = get_sj_only_in_first_dat(gtex_normalized_dat,
     #                                                             dat)
-    # print("Compare between sample and GTEx...")
-    # different_between_rd_and_gtex = get_sj_different_between_dats(dat,
-    #                                                               gtex_normalized_dat,
-    #                                                               lr_coverage_threshold)
+
+    # TODO: uncomment the following section
+    print("Compare between sample and GTEx...")
+    print("sample")
+    print(is_present_causal_sj(sample_normalized_dat, TRUTH_SET[cur_sample]))
+    print("gtex")
+    print(is_present_causal_sj(gtex_normalized_dat, TRUTH_SET[cur_sample]))
+    different_between_rd_and_gtex = get_sj_different_between_dats(sample_normalized_dat,
+                                                                  gtex_normalized_dat)
+    print(different_between_rd_and_gtex.shape[0])
+    print(is_present_causal_sj(different_between_rd_and_gtex, TRUTH_SET[cur_sample]))
+
+    print(is_present_causal_sj(different_between_rd_and_gtex, TRUTH_SET[cur_sample]))
+
+    if is_present_causal_sj(different_between_rd_and_gtex, TRUTH_SET[cur_sample]):
+        print("Causal SJ is captured.")
+    else:
+        print("Causal SJ is missed.")
+
     # different_between_rd_and_gtex.to_csv(
     #     f"{cur_sample}_different_between_rd_and_gtex.tsv", sep="\t", index=False)
 
@@ -429,14 +473,15 @@ def compare_with_gtex(gtex_normalized_dat, sample_normalized_dat, lr_coverage_th
     #     columns=["lr_coverage"])
     # different_between_rd_and_gtex = different_between_rd_and_gtex.drop(
     #     columns=["lr_coverage"])
-    print("in rd: ", in_rd_not_in_gtex_normalized_dat.shape[0])
+
+    # print("in rd: ", in_rd_not_in_gtex_normalized_dat.shape[0])
     # print("in gtex: ", in_gtex_normalized_not_in_rd_dat.shape[0])
-    # print("different: ", different_between_rd_and_gtex.shape[0])
+    print("different: ", different_between_rd_and_gtex.shape[0])
 
     res = pd.concat([
-        in_rd_not_in_gtex_normalized_dat,
+        # in_rd_not_in_gtex_normalized_dat,
         # in_gtex_normalized_not_in_rd_dat,
-        # different_between_rd_and_gtex
+        different_between_rd_and_gtex
     ])
     res.to_csv(f"{cur_sample}_transcriptome_wide_res.tsv", sep="\t", index=False)
     return res
@@ -454,8 +499,12 @@ def apply_filters(bed_dat, gtex_normalized_dat, sample_id):
 
     print("Normalize sample reads by mean exon coverage...")
     start_time = time.time()
+    print(compute_average_exon_coverage_for_a_gene("FBXW10", sample_bw))
+    for gene in sample_gene_coverage_dict:
+        if sample_gene_coverage_dict[gene] == 0:
+            print(gene, sample_gene_coverage_dict[gene])
     normalized_filtered_bed_dat = normalize_reads_by_gene(bed_dat,
-                                                          # sample_gene_coverage_dict,
+                                                          sample_gene_coverage_dict,
                                                           )
     end_time = time.time()
     print(f"Normalization took {end_time - start_time} seconds.")
@@ -466,14 +515,12 @@ def apply_filters(bed_dat, gtex_normalized_dat, sample_id):
     print("Normalize GTEx reads by mean exon coverage...")
     normalized_gtex_normalized_dat = normalize_reads_by_gene(
         gtex_normalized_dat,
-        # gtex_gene_coverage_dict,
+        gtex_gene_coverage_dict,
     )
 
     print("Compare sample metrics with GTEx metrics...")
-    lr_coverage_threshold = 5
     filtered_bed_dat = compare_with_gtex(normalized_gtex_normalized_dat,
                                          normalized_filtered_bed_dat,
-                                         lr_coverage_threshold,
                                          sample_id)
 
     print("Done.")
@@ -520,7 +567,7 @@ def annotate_with_gene_names(junctions_bed_gz_path, sample_id):
                                                                   x["end"]),
                                     axis=1)
         # Read interval count from json file
-        with open("num_sample_with_this_junction_count.json", "r") as f:
+        with open("num_sample_with_this_junction_count_stringent.json", "r") as f:
             interval_count = json.load(f)
         bed["num_samples_with_this_junction"] = bed["interval"].map(interval_count)
         # bed["num_samples_with_this_junction"] = bed[
@@ -560,11 +607,14 @@ def compute_average_exon_coverage_for_selected_genes(genes, bw):
     # genes = genes[:1]
     # genes = ["TTN"]
     for cur_gene in genes:
+        print(cur_gene)
         if cur_gene == ".":
             continue
-        average_exon_coverage_for_cur_gene = compute_average_exon_coverage_for_a_gene(
-            cur_gene, bw)
         if cur_gene not in gene_coverage_dict:
+            average_exon_coverage_for_cur_gene = compute_average_exon_coverage_for_a_gene(
+                                                    cur_gene,
+                                                    bw
+                                                )
             gene_coverage_dict[cur_gene] = average_exon_coverage_for_cur_gene
     return gene_coverage_dict
 
@@ -680,8 +730,9 @@ if __name__ == "__main__":
     rdg_rna_seq_dat = read_from_airtable(RNA_SEQ_BASE_ID,
                                          DATA_PATHS_TABLE_ID,
                                          DATA_PATHS_VIEW_ID)
-    rdg_rna_seq_dat = rdg_rna_seq_dat[
-        rdg_rna_seq_dat["sample_id"].isin(TRUTH_SET.keys())]
+    # rdg_rna_seq_dat = rdg_rna_seq_dat[
+    #     rdg_rna_seq_dat["sample_id"].isin(TRUTH_SET.keys())]
+
     # junctions_bed_gz_paths = list(rdg_rna_seq_dat["junctions_bed"])
     # bigwig_paths = list(rdg_rna_seq_dat["coverage_bigwig"])
     # single_wgs_vcf_paths = list(rdg_rna_seq_dat["wgs_single_sample_vcf"])
@@ -693,8 +744,10 @@ if __name__ == "__main__":
         sample_vcf_dict = json.load(f)
 
     for cur_sample in sample_vcf_dict:
-        # if cur_sample != "41M_MW_M1":
-        #     continue
+        if cur_sample not in TRUTH_SET:
+            continue
+        if cur_sample != "149BP_AB_M1":
+            continue
         print(cur_sample)
         # TODO: uncomment here
         # if cur_sample in sample_vcf_dict:
@@ -710,10 +763,10 @@ if __name__ == "__main__":
         #         continue
         cur_single_vcf_path = sample_vcf_dict[cur_sample]
         print(cur_single_vcf_path)
-        cur_rare_variant_loci = get_df_with_rare_dna_variants(
-            cur_single_vcf_path,
-            rare_af_threshold=0.05)
-        print(cur_rare_variant_loci)
+        # cur_rare_variant_loci = get_df_with_rare_dna_variants(
+        #     cur_single_vcf_path,
+        #     rare_af_threshold=0.1)
+        # print(cur_rare_variant_loci)
 
         # TODO: annotate only once (save and check if exists)
         cur_junctions_bed_gz_path = rdg_rna_seq_dat[rdg_rna_seq_dat["sample_id"] ==
@@ -730,7 +783,7 @@ if __name__ == "__main__":
         gtex_annotated = annotate_with_gene_names(GTEx_NORMALIZED_BED, "gtex")
         # Keep splice junctions that have at least 2 uniquely-mapped reads
         gtex_annotated = gtex_annotated[
-            gtex_annotated["uniquely_mapped"] >= 2]
+            gtex_annotated["uniquely_mapped"] >= UNIQUE_READS_THRESHOLD]
         gtex_annotated = gtex_annotated[
             gtex_annotated["maximum_spliced_alignment_overhang"] >= 20]
 
@@ -752,22 +805,24 @@ if __name__ == "__main__":
         # genes = sample_annotated["gene"].unique()
 
         print(f"Computing average exon coverage for sample {cur_sample}...")
-        # start = time.time()
-        # gene_coverage_dict = compute_average_exon_coverage_for_selected_genes(all_genes, sample_bw)
-        # with open(f"{cur_sample}_gene_coverage_dict.json", "w") as file:
-        #     json.dump(gene_coverage_dict, file, indent=4)
-        # end = time.time()
-        # print(f"Computing average exon coverage took {end - start} seconds.")
+        if not os.path.exists(f"{cur_sample}_gene_coverage_dict.json"):
+            start = time.time()
+            gene_coverage_dict = compute_average_exon_coverage_for_selected_genes(all_genes,
+                                                                                  sample_bw)
+            with open(f"{cur_sample}_gene_coverage_dict.json", "w") as file:
+                json.dump(gene_coverage_dict, file, indent=4)
+            end = time.time()
+            print(f"Computing average exon coverage took {end - start} seconds.")
 
-        # with open(f"{cur_sample}_gene_coverage_dict.json", "r") as file:
-        #     sample_gene_coverage_dict = json.load(file)
+        with open(f"{cur_sample}_gene_coverage_dict.json", "r") as file:
+            sample_gene_coverage_dict = json.load(file)
 
         print(f"Computing average exon coverage for GTEx...")
         start = time.time()
-        # gtex_gene_coverage_dict = compute_average_exon_coverage_for_selected_genes(all_genes,
+        # gene_coverage_dict = compute_average_exon_coverage_for_selected_genes(all_genes,
         #                                                                            gtex_bw)
         # with open("gtex_gene_coverage_dict.json", "w") as file:
-        #     json.dump(gtex_gene_coverage_dict, file, indent=4)
+        #     json.dump(gene_coverage_dict, file, indent=4)
         end = time.time()
         print(f"Computing average exon coverage took {end - start} seconds.")
 
