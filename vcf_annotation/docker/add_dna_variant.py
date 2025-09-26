@@ -9,7 +9,6 @@ REGION = ["us-central1"]
 # gnomad_genomes = "gs://gcp-public-data--gnomad/release/4.1/ht/genomes/gnomad.genomes.v4.1.sites.ht"
 # gnomad_exomes = "gs://gcp-public-data--gnomad/release/4.1/ht/exomes/gnomad.exomes.v4.1.sites.ht"
 gnomad_joint = "gs://gcp-public-data--gnomad/release/4.1/ht/joint/gnomad.joint.v4.1.sites.ht"
-gnomad_splice_ai = "gs://jialan-storage/ref/splice_ai.ht"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -149,14 +148,11 @@ if __name__ == "__main__":
         help="ID of the sample.",
         required=True,
     )
-    parser.add_argument("--billing-project", type=str, help="Project to bill under.",
-                        default="tgg-rare-disease")
+    parser.add_argument("--billing-project", type=str, help="Project to bill under.")
     parser.add_argument("--requester-pays-project", type=str,
-                        help="Requester pays project to bill under.",
-                        default="cmg-analysis")
+                        help="Requester pays project to bill under.")
     parser.add_argument("--file-dir", type=str,
-                        help="The directory to store results table.",
-                        default="gs://jialan-storage")
+                        help="The directory to store results table.")
     # parser.add_argument(
     #     "--annotation-ht",
     #     type=str,
