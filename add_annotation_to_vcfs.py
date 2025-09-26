@@ -29,14 +29,11 @@ def run_job(cmd):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--billing-project", type=str, help="Project to bill under.",
-                        default="tgg-rare-disease")
+    parser.add_argument("--billing-project", type=str, help="Project to bill under.")
     parser.add_argument("--requester-pays-project", type=str,
-                        help="Requester pays project to bill under.",
-                        default="cmg-analysis")
+                        help="Requester pays project to bill under.")
     parser.add_argument("--file-dir", type=str,
-                        help="The directory to store results table.",
-                        default="gs://jialan-storage")
+                        help="The directory to store results table.")
     args = parser.parse_args()
 
     backend = hb.ServiceBackend(billing_project=args.billing_project,
