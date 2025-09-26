@@ -40,60 +40,6 @@ DISEASE_GENES = {"PYROXD1": "chr12:21437615-21471250:+",
                  "LAMA2": "chr6:128883138-129516566:+",
                  "COL6A2": "chr21:46098112-46132848:+"}
 
-TRUTH_SET = {
-    "41M_MW_M1": "chr12:21440448-21449562",
-    "153BR_JB_M1": "chr2:151672680-151675286",
-    "163BV_JE_M1": "chr2:151680828-151684777",
-    "210DB_BW_M1": "chr19:38433874-38440744",
-    "T1244": "chr2:178622008-178624464",
-    "361AL_CC_M1": "chr2:237358583-237359205",
-    "149BP_AB_M1": "chr2:151498552-151499297",
-    "UC84-1RNA": "chr2:151531896-151533441",
-    "247DT_SH_M1": "chr2:151687733-151688371",
-    "373HQ_BTG_M1": "chr2:178580609-178581905",
-    "B11-48-1M": "chr1:46189357-46189483",
-    "TOP_MAAC031_F_Muscle1": "chrX:31595644-31627672",
-    "26I_SK_M1": "chr2:151531896-151533382",
-    "CLA_180CJ_DP_2": "chr19:38467812-38468965",
-    "UC316-1M": "chr21:45989778-45989893",
-    "UC393-1M": "chr21:45989778-45989893",
-    "49O_NM_M1": "chrX:32256704-32287528",
-    "MBEL028_002_1": "chr15:42399885-42401640",
-    "251DW_SD_M1": "chrX:31729748-31819974",
-    "126BG_CB_M1": "chr22:33337801-33919994",
-    "MBRU030_2": "chrX:153781828-153782120",
-    "B14-78-1-U": "chr6:129453131-129454154",
-    "205E_BD_M1": "chr21:46126237-46131953",
-    "253DY_HA_M1": "chrX:32501842-32518007",
-    "LIA_MAS02_2": "chrX:31348634-31444480",
-    "NH11-441": "chr21:45989778-45989893",
-    "BON_B16-59_1": "chr21:45989778-45989893",
-    "BON_B22_12_1_R1": "chr19:38505946-38506321",
-    "RGP_2058_3_M1": "chr21:45989778-45989874",
-    "BEG_1025-1_T999": "chrX:150596570-150619037",
-}
-
-GTEx = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.junctions.bed.gz"
-GTEx_NORMALIZED_BED = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.junctions.bed.gz"
-GTEx_NORMALIZED_BIGWIG = "gs://tgg-viewer/ref/GRCh38/gtex_v8/GTEX_muscle.803_samples.normalized.bigWig"
-
-BATCH_2023 = {"RGP_2058_3_M1", "BON_B22_12_1_R1"}
-BATCH_2022 = {"BON_B16-59_1"}
-
-""" future use
-"251DW_SD_M1": "chrX:31729748-31819974",
-"253DY_HA_M1": "chrX:32518008",  # outside of all splice junctions?
-"126BG_CB_M1": "chr22:33337801-33919994",
-"RGP_2058_3_M1": "chr21:45989778-45989874",  # does not have num_samples_with_this_junction
-"BON_B22_12_1_R1": "chr19:38505946-38506321",  # does not have num_samples_with_this_junction
-"MBRU030_2": "chrX:153781828-153782120", 
-"LIA_MAS02_2": "chrX:31118218-33340460", # causal sj not exact
-"BEG_1025-1_T999": "chrX:150598686",  # 150598686-150614588 (1 umapped) or 150598686-150638942 (0 umapped)
-"B14-78-1-U": "chr6:129453131-129453132",
-"205E_BD_M1": "chr21:46126238-46131953",
-"BON_B16-59_1": "chr21:45989778-45990257", # does not have num_samples_with_this_junction
-"""
-
 validating_metrics = {}
 samples = list(TRUTH_SET.keys())
 causal_sj = list(TRUTH_SET.values())
